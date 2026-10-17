@@ -1,2 +1,0 @@
-* Fixed import compatibility with Simple Calendar.
-* Fixed foss flavor configuration.

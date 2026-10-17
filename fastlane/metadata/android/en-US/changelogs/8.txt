@@ -1,9 +1,0 @@
-Added:
-
-• Holidays for Vietnam 
-• Holidays for Hong Kong 
-
-Changed:
-
-• Updated translations
-

@@ -1,12 +1,10 @@
 # 有期 0.2.2
 
-个人安卓日历测试版，基于 Fossify Calendar 二次开发。
+独立维护的个人安卓日程与待办应用。源码、反馈及版本管理统一在 [1qiuyu/youqi-android](https://github.com/1qiuyu/youqi-android)。
 
-上游：https://github.com/FossifyOrg/Calendar
+本机编译，不跟随原项目的发布或更新流程；GitHub Actions 保持关闭。
 
-基线提交：`9e1d78c592f3a5b1a1c4cfd31c90a00cc2b516b8`
-
-许可证：GNU GPL v3，见本仓库 `LICENSE`。保留上游版权与原始来源。
+许可证为 GNU GPL v3，原有代码的来源和版权说明见 [NOTICE.md](NOTICE.md)。
 
 ## 实现范围
 
@@ -31,7 +29,7 @@
 
 `YouqiActivity` 是独立的 AppCompatActivity，保留有期自己的名称和图标。`IcsImporter` 的输入依赖从原界面基类改为 Context，让导入核心能够独立复用。Fossify 的旧活动和提醒入口未在有期清单中开放。
 
-应用数据库中：截止任务映射为 Fossify Task，其时间字段保存截止时刻；时段活动映射为 Event；通知原文、可选开始时间语义、颜色和每次完成信息由有期元数据保存。原始导入 UID 保留，重复导入由上游导入器识别。
+应用数据库中：截止任务映射为 Fossify Task，其时间字段保存截止时刻；时段活动映射为 Event；通知原文、可选开始时间语义、颜色和每次完成信息由有期元数据保存。原始导入 UID 保留，重复导入由内置 ICS 导入器识别。
 
 ## 构建
 
