@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="youqi_name">有期</string>
+    <string name="youqi_name">云朵</string>
     <color name="youqi_purple">#6A57AE</color>
     <style name="YouqiTheme" parent="AppTheme">
         <item name="windowActionBar">false</item>
@@ -10,4 +10,5 @@
         <item name="android:windowBackground">#FFFFFF</item>
         <item name="android:colorAccent">#6A57AE</item>
     </style>
+    <color name="yunduo_icon_background">#171819</color>
 </resources>

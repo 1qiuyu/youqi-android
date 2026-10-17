@@ -1,1 +1,1 @@
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/youqi_purple"/><foreground android:drawable="@drawable/ic_youqi_foreground"/></adaptive-icon>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/yunduo_icon_background"/><foreground android:drawable="@drawable/ic_youqi_foreground"/><monochrome android:drawable="@drawable/ic_youqi_foreground"/></adaptive-icon>

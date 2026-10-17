@@ -1,10 +1,22 @@
-# 有期 0.3.0
+# 云朵 0.4.0（原「有期」）
 
 独立维护的个人安卓日程与待办应用。源码、反馈及版本管理统一在 [1qiuyu/youqi-android](https://github.com/1qiuyu/youqi-android)。
 
 本机编译，不跟随原项目的发布或更新流程；GitHub Actions 保持关闭。
 
 许可证为 GNU GPL v3，原有代码的来源和版权说明见 [NOTICE.md](NOTICE.md)。
+
+## 0.4.0 · 云朵管家与像素猫
+
+- 应用显示名称改为「云朵」，桌面使用极简线条像素猫云朵图标。包名、数据库和原有 API 配置保持不变。
+- 小猫常驻应用各页面，默认贴边睡觉；左右边分别旋转停靠，底部横趴。拖动与点击时乘云，只露出头和尾巴；点击移到顶部打开对话，收起后返回原位置。
+- 设置提供显示开关、极简线条/奶油/自定义配色、色圈、亮度与颜色值。预设浅色主题自动变黑猫，深色恢复原色。Android WebView 色圈带独立显示的背景兼容处理。
+- 管家沿用已有 OpenAI 兼容文本 API，支持有限上下文和应用内导航，不能操作其他应用。涉及新增、编辑、完成、删除时先显示确认，新增与编辑复用原有表单。
+- 默认不持久保存聊天，可选择仅本机保存并清空。仅按提问需要发送相关时段最多60项日程及最近6轮对话。
+- 语音沿用独立配置的转写服务，主动录音、转成可编辑文字，再由用户发送。没有配置 API 时，原有手动添加、日历、待办和本地导航照常可用；AI 问答与自动提取仍需配置。
+- 已通过12项原有日历/待办浏览器回归及管家交互检查，并在实体手机覆盖安装、验证 API 测试问候。升级前后日程和文本/语音 API 配置摘要一致。未在用户手机运行会清空数据的原生测试。
+
+本机编译时请继续使用原安装包对应的签名文件；若通过 `ANDROID_USER_HOME` 指定调试签名目录，后续构建也应保持一致，才能保留数据覆盖升级。签名文件与密钥不进入仓库。
 
 ## 实现范围
 
@@ -28,7 +40,7 @@
 
 新增代码位于 `app/src/main/kotlin/org/fossify/calendar/youqi/`，界面资源位于 `app/src/main/assets/youqi/`。
 
-`YouqiActivity` 是独立的 AppCompatActivity，保留有期自己的名称和图标。`IcsImporter` 的输入依赖从原界面基类改为 Context，让导入核心能够独立复用。Fossify 的旧活动和提醒入口未在有期清单中开放。
+`YouqiActivity` 是独立的 AppCompatActivity，使用云朵自己的名称和像素猫图标。`IcsImporter` 的输入依赖从原界面基类改为 Context，让导入核心能够独立复用。Fossify 的旧活动和提醒入口未在有期清单中开放。
 
 应用数据库中：截止任务映射为 Fossify Task，其时间字段保存截止时刻；时段活动映射为 Event；通知原文、可选开始时间语义、颜色和每次完成信息由有期元数据保存。原始导入 UID 保留，重复导入由内置 ICS 导入器识别。
 
@@ -48,9 +60,9 @@ sdk.dir=/你的/Android/sdk/路径
 ./gradlew :app:assembleFossDebug
 ```
 
-APK：`app/build/outputs/apk/foss/debug/youqi-8-foss-debug.apk`。
+APK：`app/build/outputs/apk/foss/debug/youqi-9-foss-debug.apk`。
 
-测试版包名 `com.youqi.calendar.debug`，独立于原 Fossify Calendar。版本名 0.3.0，版本号 8。测试版使用调试签名；同一台构建机保留签名密钥后可继续覆盖更新。
+测试版包名 `com.youqi.calendar.debug`，独立于原 Fossify Calendar。版本名 0.4.0，版本号 9。测试版使用调试签名；同一台构建机保留签名密钥后可继续覆盖更新。
 
 ## 验证
 

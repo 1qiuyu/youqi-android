@@ -1,4 +1,4 @@
-/* 有期 · 应用主逻辑
+/* 云朵 · 应用主逻辑
    明暗双模、无限周时间表、文字/图片识别日程。
    数据由原生桥接（YouqiAndroid）持久化到 Fossify 的 Room 数据库。 */
 (() => {
@@ -184,6 +184,7 @@
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#121116' : '#F7F5FB');
 
     try { call('setAppearance', theme === 'dark'); } catch (_) { }
+    window.dispatchEvent(new Event('yunduo-appearance'));
   }
 
   /* ------------------------------------------------------------- 事件模型 */
@@ -795,7 +796,7 @@
       : `<div class="bg-preview"><div class="bg-preview-empty">${icon('image')}<span>还没有选择背景图片</span></div></div>`;
 
     return `<header class="appbar">
-      <div class="appbar-title"><p class="appbar-eyebrow">有期 0.3.0</p><h1>设置</h1></div>
+      <div class="appbar-title"><p class="appbar-eyebrow">云朵 0.4.0</p><h1>设置</h1></div>
     </header>
     <div class="content">
       <div class="settings-group">
@@ -839,6 +840,7 @@
         </div>
       </div>
 
+      <div id="assistantSettings"></div>
       <div class="settings-group">
         <h2>智能录入</h2>
         <div class="plain-list">
@@ -853,7 +855,7 @@
         <div class="plain-list">
           ${row('upload', '导入课表', '选择 ThuInfo 导出的 .ics 文件', 'import-ics')}
           ${row('download', '导出备份', '日程、颜色、重复规则与完成记录', 'export-backup')}
-          ${row('folder', '恢复备份', '选择有期 JSON 备份文件', 'import-backup')}
+          ${row('folder', '恢复备份', '选择云朵 JSON 备份文件', 'import-backup')}
         </div>
         <p class="helper-note">备份不含 API Key。系统自动备份已关闭，建议定期手动导出。</p>
       </div>
@@ -862,7 +864,7 @@
         <h2>关于</h2>
         <div class="plain-list">
           ${row('shield', '本机保存', '日程离线可用，密钥单独加密', 'storage-info')}
-          ${row('info', '关于有期', '基于 Fossify Calendar · GPL-3.0', 'about')}
+          ${row('info', '关于云朵', '基于 Fossify Calendar · GPL-3.0', 'about')}
         </div>
       </div>
     </div>`;
@@ -895,6 +897,7 @@
     const content = screenRoot.querySelector('.content');
     if (content && state.tab !== 'calendar') content.scrollTop = homeScroll;
     if (state.tab === 'calendar') mountWeekPager();
+    window.YunduoCat?.refresh();
   }
 
   function changeWeek(weeks) {
@@ -1021,6 +1024,7 @@
   function showSheet(html, mode) {
     if (sheetMode === 'voice-input' && mode !== 'voice-input') cleanupSpeech();
     if (overlay.hidden) previousFocus = document.activeElement;
+    window.YunduoCat?.suspend();
     sheetMode = mode;
     sheet.innerHTML = html;
     overlay.hidden = false;
@@ -1039,6 +1043,7 @@
     document.body.classList.remove('sheet-open');
     sheetMode = '';
     sheet.innerHTML = '';
+    window.YunduoCat?.refresh();
     previousFocus?.focus?.({ preventScroll: true });
   }
 
@@ -1677,6 +1682,65 @@
       </div>`, 'detail');
   }
 
+
+  // Explicit, narrow adapter: the assistant can propose changes, then use existing editors.
+  window.YunduoHost = {
+    call,
+    request(method, ...args) {
+      return new Promise((resolve, reject) => nativeRequest(id => call(method, id, ...args), result => {
+        if (result.ok) resolve(result.data || {}); else reject(new Error(result.error || '请求失败'));
+      }));
+    },
+    toast,
+    isDark,
+    hasSheet: () => !overlay.hidden,
+    navigate(tab) {
+      if (!TABS.some(([name]) => name === tab)) throw new Error('不能打开这个页面');
+      state.tab = tab; render();
+    },
+    describe(action) {
+      const event = state.events.find(e => e.id === action.id);
+      if (!event) throw new Error('这项安排已不存在，请重新查询');
+      return {title:event.title, due:event.due, repeat:!!event.repeat};
+    },
+    prepare(action) {
+      if (action.type === 'add') {
+        editingId = null; editScopeTarget = 'all'; editBaseDate = null; draftManual = false;
+        drafts = draftsFromModel(action.events, '云朵管家');
+        drafts.forEach((draft,index) => { draft.showInTasks = action.events[index]?.showInTasks === true; });
+        if (!drafts.length) throw new Error('没有可添加的安排');
+        renderDrafts(); return '已打开新增预览，请检查后保存';
+      }
+      const event = state.events.find(e => e.id === action.id);
+      if (!event) throw new Error('这项安排已不存在，请重新查询');
+      const date = validDay(action.date) ? action.date : event.due.slice(0,10);
+      if (!getOccurrence(event.id,date)) throw new Error('这次安排已变化，请重新查询');
+      if (action.type === 'edit') { openEdit(event.id,date); return '已打开编辑页，请修改后保存'; }
+      if (action.type === 'delete') { requestDelete(event.id,date); return '请选择并确认删除范围'; }
+      if (action.type === 'complete') {
+        if (event.completedDates.includes(date)) return '这一项已经完成';
+        event.completedDates = [...new Set([...event.completedDates,date])];
+        if (!save()) throw new Error('保存未完成，请重新查询后再试');
+        render(true); return '已标记本次完成';
+      }
+      throw new Error('暂不支持这个操作');
+    },
+    context(text) {
+      const now = new Date(), today = atDay(dateKey(now));
+      let from = today, to = addDays(today,14);
+      if (/明天/.test(text)) { from=addDays(today,1); to=addDays(today,2); }
+      else if (/今天|今日/.test(text)) to=addDays(today,1);
+      else if (/下周/.test(text)) { from=addDays(monday(now),7); to=addDays(from,7); }
+      else if (/本周|这周/.test(text)) { from=monday(now); to=addDays(from,7); }
+      const explicit=text.match(/20\d{2}-\d{2}-\d{2}/);
+      if (explicit && validDay(explicit[0])) { from=atDay(explicit[0]); to=addDays(from,1); }
+      const rows=occurrences(from,new Date(to.getTime()-1));
+      const context=rows.slice(0,60).map(e=>({id:e.id,title:e.title.slice(0,100),due:e.due,start:e.start,
+        occurrenceDate:e.occurrenceDate || e.due.slice(0,10),done:e.done,location:e.location?.slice(0,100),note:e.note?.slice(0,120)}));
+      return {context,contextRange:`${dateKey(from)} 至 ${dateKey(new Date(to.getTime()-1))}，最多60项，截断：${rows.length>60}`};
+    }
+  };
+
   let activeOccurrence = null;
 
   function toggleComplete(id, date) {
@@ -1944,7 +2008,7 @@
 
       // 模型给出的重复描述归一化成结构化规则
       let repeat = null;
-      if (item.repeat === true || item.repeatFreq || item.repeat) {
+      if (item.repeat === true || (item.repeatFreq && item.repeatFreq !== 'none') || (item.repeat && item.repeat !== 'none')) {
         const freq = ['daily', 'weekly', 'monthly', 'yearly'].includes(item.repeatFreq) ? item.repeatFreq
           : ['daily', 'weekly', 'monthly', 'yearly'].includes(item.repeat) ? item.repeat : 'weekly';
         const base = validISO(due) ? new Date(due) : NOW;
@@ -2407,7 +2471,7 @@
   function showAbout() {
     let license = '';
     try { license = call('license'); } catch (_) { }
-    showSheet(`${sheetHeader('关于有期', '0.3.0 · 个人安卓版')}
+    showSheet(`${sheetHeader('关于云朵', '0.4.0 · 个人安卓版')}
       <div class="sheet-body">
         <p class="helper-note">基于 Fossify Calendar 二次开发，使用其本地数据库、重复规则引擎与 ICS 导入。</p>
         <p class="helper-note">日程识别的原文与图片会发送到你自己填写的 API 地址。应用没有自建转发服务器，密钥使用 Android Keystore 加密后单独保存，不写入日志、不进入备份。</p>
@@ -2438,6 +2502,7 @@
 
   /* -------------------------------------------------原生回调与对外接口 */
   window.YouqiNativeResult = result => {
+    if (window.YunduoCat?.onAudioResult(result)) return;
     if (result.id === 'speech-stopped' || result.id === 'speech-interrupted') {
       voice.generation++;
       voice.phase = 'idle'; clearInterval(voice.timer);
@@ -2464,6 +2529,7 @@
     refreshData() { try { reload(); } catch (_) { } render(true); },
     handleBack() {
       if (!overlay.hidden) { closeSheet(); return true; }
+      if (window.YunduoCat?.handleBack()) return true;
       if (state.tab !== 'home') { state.tab = 'home'; render(); return true; }
       return false;
     },

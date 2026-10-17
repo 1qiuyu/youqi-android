@@ -28,6 +28,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -111,6 +112,7 @@ class YouqiActivity : AppCompatActivity() {
                         asset.endsWith(".css") -> "text/css"
                         asset.endsWith(".js") -> "application/javascript"
                         asset.endsWith(".svg") -> "image/svg+xml"
+                        asset.endsWith(".png") -> "image/png"
                         else -> "text/plain"
                     }
                     return try {
@@ -480,6 +482,31 @@ class YouqiActivity : AppCompatActivity() {
         @JavascriptInterface fun listOccurrences(from: String, to: String): String = try { store.occurrences(from, to) } catch (error: Exception) { JSONObject().put("error", errorMessage(error)).toString() }
         @JavascriptInterface fun saveEvents(content: String): String = try { store.save(content); JSONObject().put("ok", true).toString() } catch (error: Exception) { JSONObject().put("ok", false).put("error", errorMessage(error)).toString() }
         @JavascriptInterface fun getConfig(): String = miniMax.config().toString()
+        @JavascriptInterface fun loadAssistantSettings(): String = prefs.getString("assistant-settings-v1", "{}") ?: "{}"
+        @JavascriptInterface fun saveAssistantSettings(content: String): String = try {
+            require(content.length <= 5000) { "外观设置过大" }
+            val value = JSONObject(content)
+            val edit = prefs.edit().putString("assistant-settings-v1", value.toString())
+            if (!value.optBoolean("saveHistory")) edit.remove("assistant-history-v1")
+            check(edit.commit()) { "助手设置保存失败" }
+            JSONObject().put("ok", true).toString()
+        } catch (error: Exception) { JSONObject().put("ok", false).put("error", errorMessage(error)).toString() }
+        @JavascriptInterface fun loadAssistantHistory(): String {
+            val enabled = runCatching { JSONObject(loadAssistantSettings()).optBoolean("saveHistory") }.getOrDefault(false)
+            return if (enabled) prefs.getString("assistant-history-v1", "[]") ?: "[]" else "[]"
+        }
+        @JavascriptInterface fun saveAssistantHistory(content: String): String = try {
+            require(content.length <= 150_000) { "聊天记录过长，请开始新对话" }
+            val enabled = JSONObject(loadAssistantSettings()).optBoolean("saveHistory")
+            val edit = prefs.edit()
+            if (enabled) edit.putString("assistant-history-v1", JSONArray(content).toString())
+            else edit.remove("assistant-history-v1")
+            check(edit.commit()) { "聊天记录保存失败" }
+            JSONObject().put("ok", true).toString()
+        } catch (error: Exception) { JSONObject().put("ok", false).put("error", errorMessage(error)).toString() }
+        @JavascriptInterface fun assistant(id: String, input: String) {
+            networkExecutor.execute { try { send(id, miniMax.assistant(input)) } catch (error: Exception) { send(id, error = errorMessage(error)) } }
+        }
         @JavascriptInterface fun saveConfig(content: String): String = try { JSONObject().put("ok", true).put("config", miniMax.saveConfig(content)).toString() } catch (error: Exception) { JSONObject().put("ok", false).put("error", errorMessage(error)).toString() }
 
         @JavascriptInterface fun analyze(id: String, text: String, referenceDate: String) {
