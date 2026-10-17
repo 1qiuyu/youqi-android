@@ -1,0 +1,71 @@
+{
+  "version": "0.3.0",
+  "versionCode": 8,
+  "package": "com.youqi.calendar.debug",
+  "browserVoice": {
+    "checks": 11,
+    "passed": [
+      "语音入口可用；大录音按钮为主，音频导入为下方小选项",
+      "麦克风拒绝后恢复空闲态，可直接改用音频导入",
+      "录音计时及停止正常，停止后保留音频，未点击转写不会上传",
+      "独立语音API支持模型列表与自定义名称，保存返回语音页并保留音频",
+      "转写失败保留音频可重试；取消后迟到的结果不会覆盖界面",
+      "导入音频可以转写为可编辑文字，转写不会直接创建日程",
+      "编辑后的语音文字交给现有AI提取，确认保存后才写入且保留显示默认值",
+      "关闭录音面板会取消录音，再次进入不会残留录音状态",
+      "后台中断和录音时长上限回调都能恢复界面并保留有效录音",
+      "重新打开配置时不回显Key，已选语音模型正常保留",
+      "新增语音后文字/图片入口仍可用，图片识别发送正确的原生令牌"
+    ],
+    "errors": []
+  },
+  "browserCalendarRegression": {
+    "checks": 12,
+    "passed": [
+      "无重复标记的固定课程也隐藏；同名周四实验、习题课和隔周活动保留",
+      "用户的接下来勾选优先于固定课程自动筛选",
+      "编辑页能真实上下滑动，保存固定在右上角×下方",
+      "键盘大小的短视口下保存仍可见，表单仍有滚动区域",
+      "顶部保存可完成改名，原日程就地更新且无重复新增",
+      "新建日程默认勾选接下来、不勾选待办",
+      "接下来/待办独立开关保存后生效，重新编辑保留勾选，支持同时显示",
+      "右上角关闭只取消，不会误触保存",
+      "本周第5周，左右箭头一键切整周",
+      "自由滑动跨周显示双周数，箭头可从任意位置跳到下一整周",
+      "周数与校历锚点一致，显示到第18周为止",
+      "修改一节课的颜色后，同一门课跨日期保持一致"
+    ],
+    "errors": []
+  },
+  "native": {
+    "passed": 13,
+    "skipped": 0,
+    "externalApiCalls": 0,
+    "classes": [
+      "YouqiSpeechTest",
+      "YouqiApiTest",
+      "YouqiVisibilityTest"
+    ]
+  },
+  "physicalDevice": {
+    "device": "iQOO 15",
+    "version": "0.3.0",
+    "recordingFirstLayout": true,
+    "importSmallAndBelow": true,
+    "realMicrophoneRecording": true,
+    "recordingStopsInBackground": true,
+    "backgroundClipRetained": true,
+    "systemAudioPickerAndCancellation": true,
+    "separateSpeechConfig": true,
+    "audioNotSentToExternalService": true,
+    "testClipsDiscarded": true,
+    "speechApiNotConfigured": true,
+    "realTranscriptionNotTested": true,
+    "clipDuration": "00:03 · 0.0 MB"
+  },
+  "existingCalendarAndTextApiUnchanged": true,
+  "limitations": [
+    "真实语音服务尚未配置，外部转写效果未验证；协议与错误处理使用fixtures验证。",
+    "仅支持OpenAI/Whisper兼容的multipart转写协议，其他协议需要适配。"
+  ]
+}

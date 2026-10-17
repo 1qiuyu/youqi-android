@@ -31,3 +31,14 @@ fastlane/report.xml
 # This repository only stores source; cloud workflows stay disabled.
 .github/workflows/
 .github/dependabot.yml
+
+# Speech recordings and imported personal audio stay local.
+*.wav
+*.m4a
+*.mp3
+*.flac
+*.ogg
+*.webm
+*.mp4
+*.aac
+*.amr

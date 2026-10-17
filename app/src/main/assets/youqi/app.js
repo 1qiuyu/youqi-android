@@ -53,6 +53,8 @@
     chevron: '<path d="m9.5 6 6 6-6 6"/>',
     chevronDown: '<path d="m6 9.5 6 6 6-6"/>',
     spark: '<path d="M12 3.5 13.9 9 19.5 11 13.9 13 12 18.5 10.1 13 4.5 11 10.1 9Z"/><path d="M18.6 2.4 19.3 4.4 21.3 5.1 19.3 5.8 18.6 7.8 17.9 5.8 15.9 5.1 17.9 4.4Z"/>',
+    mic: '<rect x="8" y="3" width="8" height="12" rx="4"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/>',
+    stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     image: '<rect x="3.5" y="4.5" width="17" height="15" rx="3.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4.5 17 4.4-4.2a2 2 0 0 1 2.7 0l3 2.8m0 0 1.7-1.6a2 2 0 0 1 2.7 0l1.5 1.4m-5.9.2 2.4 2.3"/>',
     pin: '<path d="M19 10.2c0 5-7 10.8-7 10.8S5 15.2 5 10.2a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10.2" r="2.6"/>',
     edit: '<path d="M4 20h4l10.5-10.5a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m14.5 6 3.5 3.5"/>',
@@ -793,7 +795,7 @@
       : `<div class="bg-preview"><div class="bg-preview-empty">${icon('image')}<span>还没有选择背景图片</span></div></div>`;
 
     return `<header class="appbar">
-      <div class="appbar-title"><p class="appbar-eyebrow">有期 0.2.2</p><h1>设置</h1></div>
+      <div class="appbar-title"><p class="appbar-eyebrow">有期 0.3.0</p><h1>设置</h1></div>
     </header>
     <div class="content">
       <div class="settings-group">
@@ -841,6 +843,7 @@
         <h2>智能录入</h2>
         <div class="plain-list">
           ${row('spark', 'AI 识别接口', aiStatus, 'api-info')}
+          ${row('mic', '语音识别 API', '录音与音频转写 · 自定义接口', 'speech-config')}
         </div>
         <p class="helper-note">识别时会把原文或图片发送到你填写的 API 地址。应用没有自建服务器，密钥仅在本机加密保存。</p>
       </div>
@@ -1016,6 +1019,7 @@
   let previousFocus;
   let sheetMode = '';
   function showSheet(html, mode) {
+    if (sheetMode === 'voice-input' && mode !== 'voice-input') cleanupSpeech();
     if (overlay.hidden) previousFocus = document.activeElement;
     sheetMode = mode;
     sheet.innerHTML = html;
@@ -1028,6 +1032,7 @@
     });
   }
   function closeSheet() {
+    if (sheetMode === 'voice-input') cleanupSpeech();
     if (document.getElementById('noticeInput')) noticeText = document.getElementById('noticeInput').value;
     overlay.hidden = true;
     app.inert = false;
@@ -1067,6 +1072,10 @@
             <span class="choice-icon">${icon('edit')}</span>
             <span class="choice-copy"><strong>手动添加</strong><small>自己填写名称、时间与重复规则</small></span>
             ${icon('chevron')}
+          </button>
+          <button class="choice" data-action="choose-voice">
+            <span class="choice-icon">${icon('mic')}</span>
+            <span class="choice-copy"><strong>语音添加</strong><small>录一段通知，识别后确认日程</small></span>${icon('chevron')}
           </button>
           <button class="choice" data-action="choose-ai">
             <span class="choice-icon">${icon('spark')}</span>
@@ -1132,16 +1141,18 @@
   /* -------- AI -------- */
   // 重新渲染输入面板时保留已选图片；只有主动清空或重新进入 AI 模式才会丢弃它。
   function openAi(tab = 'text', { resetImage = false } = {}) {
+    if (sheetMode === 'voice-input' && tab !== 'voice') cleanupSpeech();
+    const priorText = document.getElementById('noticeInput');
+    if (priorText) noticeText = priorText.value;
+    messageDate = document.getElementById('messageDate')?.value || messageDate;
     activeInput = tab;
+    if (tab === 'voice') { renderSpeech(); return; }
     if (resetImage) pendingImage = null;
     const config = apiConfig();
     const ready = config.hasKey && config.model;
     showSheet(`${sheetHeader('AI 智能提取', '识别结果会先预览，确认后才写入日程')}
       <div class="sheet-body">
-        <div class="input-tabs" role="tablist">
-          <button class="${tab === 'text' ? 'active' : ''}" data-action="ai-tab" data-input="text" role="tab" aria-selected="${tab === 'text'}">${icon('note')} 文字</button>
-          <button class="${tab === 'image' ? 'active' : ''}" data-action="ai-tab" data-input="image" role="tab" aria-selected="${tab === 'image'}">${icon('image')} 图片</button>
-        </div>
+        ${inputTabs(tab)}
         <label class="field-label" for="messageDate">原文 / 截图对应日期 <span class="required-mark">*</span></label>
         <input class="text-input" id="messageDate" type="date" value="${messageDate}">
         <p class="helper-note">相对日期（“明天”“下周三”）以这一天为基准计算。</p>
@@ -1178,6 +1189,186 @@
         <button class="secondary-button" data-action="close-sheet">取消</button>
         <button class="primary-button" data-action="analyze" ${ready && (tab === 'text' || pendingImage) ? '' : 'disabled'}>${icon('spark')} 开始识别</button>
       </div>`, 'ai-input');
+  }
+
+  /* ------------------------------------------------------------- 语音录入 */
+  const voice = { phase: 'idle', audio: null, text: '', error: '', started: 0, generation: 0, timer: null };
+  function speechConfig() {
+    try { return JSON.parse(call('getSpeechConfig')); }
+    catch { return { endpoint: '', model: 'whisper-1', language: 'zh', hasKey: false }; }
+  }
+  function captureSpeechText() {
+    if (sheetMode !== 'voice-input') return;
+    const input = document.getElementById('noticeInput');
+    if (input) voice.text = input.value;
+    messageDate = document.getElementById('messageDate')?.value || messageDate;
+  }
+  function cleanupSpeech() {
+    captureSpeechText();
+    if (voice.phase === 'recording' || voice.phase === 'starting' || voice.phase === 'stopping') {
+      try { call('cancelRecording'); } catch (_) { }
+    }
+    if (voice.phase === 'transcribing') { try { call('cancelTranscription'); } catch (_) { } }
+    voice.generation++;
+    voice.phase = 'idle';
+    clearInterval(voice.timer); voice.timer = null;
+  }
+  function audioTime(ms) {
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    return `${pad(Math.floor(seconds / 60))}:${pad(seconds % 60)}`;
+  }
+  function inputTabs(tab) {
+    return `<div class="input-tabs" role="tablist" aria-label="输入方式">${[['text','note','文字'],['image','image','图片'],['voice','mic','语音']].map(([key, glyph, text]) =>
+      `<button class="${tab === key ? 'active' : ''}" type="button" data-action="ai-tab" data-input="${key}" role="tab" aria-selected="${tab === key}">${icon(glyph)} ${text}</button>`).join('')}</div>`;
+  }
+  function renderSpeech(preserveText = true) {
+    if (preserveText) captureSpeechText();
+    const config = speechConfig();
+    const configured = !!config.endpoint && !!config.model;
+    const recording = voice.phase === 'recording';
+    const working = !['idle', 'recording'].includes(voice.phase);
+    const llmReady = apiConfig().hasKey && apiConfig().model;
+    const caption = recording ? '录音中，点击停止' : voice.phase === 'starting' ? '正在准备麦克风…'
+      : voice.phase === 'stopping' ? '正在保存录音…' : voice.phase === 'importing' ? '正在读取音频…' : voice.phase === 'transcribing' ? '正在转为文字…' : voice.phase === 'extracting' ? '正在提取日程…' : voice.audio ? '再录一段' : '点击开始录音';
+    showSheet(`${sheetHeader('语音添加日程', '说出通知、安排或截止时间')}
+      <div class="sheet-body">
+        ${inputTabs('voice')}
+        <section class="speech-panel" aria-label="录音控制">
+          <button type="button" class="speech-record ${recording ? 'recording' : ''}" data-action="${recording ? 'speech-stop' : 'speech-start'}" aria-label="${recording ? '停止录音' : '开始录音'}" ${working ? 'disabled' : ''}>
+            ${working ? '<span class="spinner"></span>' : icon(recording ? 'stop' : 'mic')}
+          </button>
+          <strong class="speech-caption">${caption}</strong>
+          <span class="speech-timer" data-speech-timer aria-label="录音时长">${recording ? audioTime(Date.now() - voice.started) : voice.audio ? audioTime(voice.audio.durationMs) : '00:00'}</span>
+          <p class="helper-note">最长录音5分钟，离开应用会停止录音。</p>
+          <button type="button" class="text-button speech-import" data-action="speech-import" ${voice.phase !== 'idle' ? 'disabled' : ''}>${icon('upload')} 导入音频文件</button>
+        </section>
+        ${voice.audio ? `<div class="speech-clip"><span>${icon('mic')}<strong>${escape(voice.audio.name)}</strong><small>${audioTime(voice.audio.durationMs)} · ${(voice.audio.bytes / 1024 / 1024).toFixed(1)} MB</small></span><button type="button" class="icon-button" data-action="speech-clear" aria-label="移除音频" ${voice.phase !== 'idle' ? 'disabled' : ''}>${icon('close')}</button></div>` : ''}
+        ${voice.phase === 'transcribing' ? `<button type="button" class="secondary-button speech-transcribe" data-action="speech-cancel">取消转写</button>` : voice.audio ? `<button type="button" class="primary-button speech-transcribe" data-action="speech-transcribe" ${voice.phase !== 'idle' || !configured ? 'disabled' : ''}>${icon('spark')} 转为文字</button>` : ''}
+        <div class="speech-service-note"><span>${configured ? `${escape(config.model)} · 自定义语音服务` : '先配置语音识别 API，录好后即可转写。'}</span><button type="button" class="text-button" data-action="speech-config" ${voice.phase !== 'idle' ? 'disabled' : ''}>${configured ? '配置' : '去配置'}</button></div>
+        ${voice.error ? `<p class="form-error" role="alert">${icon('alert')}<span>${escape(voice.error)}</span></p>` : ''}
+        <label class="field-label" for="noticeInput">识别文字 <span class="optional-mark">可修改后再提取日程</span></label>
+        <textarea class="text-input" id="noticeInput" maxlength="20000" placeholder="语音识别完成后，文字会显示在这里。" ${voice.phase !== 'idle' ? 'disabled' : ''}>${escape(voice.text)}</textarea>
+        <label class="field-label" for="messageDate">说话内容对应日期</label>
+        <input class="text-input" id="messageDate" type="date" value="${messageDate}">
+        <p class="helper-note">“明天”“下周三”以这一天为准。点击“转为文字”才会把音频发给你的语音服务；提取日程使用现有 AI 接口。</p>
+        ${!llmReady ? '<p class="helper-note">还需在设置中配置日程解析 AI，才能从文字提取日程。</p>' : ''}
+      </div>
+      <div class="sheet-footer"><button type="button" class="secondary-button" data-action="close-sheet">关闭</button><button type="button" class="primary-button" data-action="analyze" ${voice.phase !== 'idle' || !voice.text.trim() || !llmReady ? 'disabled' : ''}>${icon('spark')} 提取日程</button></div>`, 'voice-input');
+    clearInterval(voice.timer);
+    if (recording) voice.timer = setInterval(() => {
+      const clock = document.querySelector('[data-speech-timer]');
+      if (clock) clock.textContent = audioTime(Date.now() - voice.started);
+    }, 250);
+  }
+  function startSpeechRecording() {
+    captureSpeechText(); voice.error = ''; voice.phase = 'starting';
+    const generation = ++voice.generation;
+    renderSpeech();
+    nativeRequest(id => call('startRecording', id), result => {
+      if (generation !== voice.generation) return;
+      voice.phase = result.ok ? 'recording' : 'idle';
+      if (result.ok) { voice.audio = null; voice.text = ''; noticeText = ''; voice.started = Date.now(); }
+      else voice.error = result.error;
+      if (sheetMode === 'voice-input') renderSpeech(!result.ok);
+    });
+  }
+  function stopSpeechRecording() {
+    voice.phase = 'stopping'; clearInterval(voice.timer); renderSpeech();
+    const generation = voice.generation;
+    nativeRequest(id => call('stopRecording', id), result => {
+      if (generation !== voice.generation) return;
+      voice.phase = 'idle';
+      if (result.ok) { voice.audio = result.data; voice.error = ''; } else voice.error = result.error;
+      if (sheetMode === 'voice-input') renderSpeech();
+    });
+  }
+  function importSpeechAudio() {
+    captureSpeechText();
+    const generation = ++voice.generation;
+    voice.phase = 'importing'; renderSpeech();
+    nativeRequest(id => call('pickAudio', id), result => {
+      if (generation !== voice.generation) return;
+      voice.phase = 'idle';
+      if (result.data?.cancelled) { if (sheetMode === 'voice-input') renderSpeech(); return; }
+      if (result.ok) { voice.audio = result.data; voice.text = ''; noticeText = ''; voice.error = ''; }
+      else voice.error = result.error;
+      if (sheetMode === 'voice-input') renderSpeech(!result.ok);
+    });
+  }
+  function transcribeSpeech() {
+    if (!voice.audio) return;
+    captureSpeechText();
+    voice.phase = 'transcribing'; voice.error = '';
+    const generation = ++voice.generation;
+    const token = voice.audio.token;
+    renderSpeech();
+    nativeRequest(id => call('transcribeAudio', id, token), result => {
+      if (generation !== voice.generation) return;
+      voice.phase = 'idle';
+      if (result.ok) { voice.text = result.data.text || ''; noticeText = voice.text; }
+      else voice.error = result.error;
+      if (sheetMode === 'voice-input') renderSpeech(false);
+    });
+  }
+  let speechReturnToInput = false;
+  function showSpeechConfig() {
+    speechReturnToInput = sheetMode === 'voice-input';
+    if (speechReturnToInput) cleanupSpeech();
+    const config = speechConfig();
+    showSheet(`<form id="speechApiForm" novalidate>
+      ${sheetHeader('语音识别 API', '支持 OpenAI / Whisper 兼容的音频转写接口', '<button type="submit" class="primary-button sheet-save">保存</button>')}
+      <div class="sheet-body">
+        <label class="field-label" for="speech-endpoint">完整转写接口地址</label>
+        <input id="speech-endpoint" name="endpoint" type="url" class="text-input" value="${escape(config.endpoint)}" placeholder="https://你的服务/v1/audio/transcriptions" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <p class="helper-note">填写服务商提供的完整 HTTPS 地址。音频通过 multipart/form-data 上传，响应需包含 text 字段。</p>
+        <label class="field-label" for="speech-key">API Key <span class="optional-mark">${config.hasKey ? '已加密保存，留空保留' : '无鉴权服务可留空'}</span></label>
+        <input id="speech-key" name="key" type="password" class="text-input" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="${config.hasKey ? '留空保留语音服务的 Key' : '填写语音服务的 Key'}">
+        <label class="field-label" for="speech-model"><span>语音识别模型</span><button type="button" class="text-button" data-action="speech-models">获取模型</button></label>
+        <input id="speech-model" name="model" class="text-input" list="speech-model-list" value="${escape(config.model || 'whisper-1')}" placeholder="如 whisper-1 或服务商提供的语音模型" autocomplete="off" spellcheck="false">
+        <datalist id="speech-model-list"></datalist>
+        <p class="helper-note" id="speechModelsNote">有模型列表时可从列表选；不提供列表的服务可填写模型名。文本模型通常不能直接识别音频。</p>
+        <label class="field-label" for="speech-language">识别语言</label>
+        <select id="speech-language" name="language" class="select-input">${[['zh','中文'],['','自动识别'],['en','英语']].map(([value,label]) => `<option value="${value}" ${config.language === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
+        ${config.hasKey ? '<label class="switch-row"><span class="switch-copy"><strong>删除语音服务的 Key</strong><small>不影响现有日程解析接口</small></span><input class="switch-control" type="checkbox" name="removeKey"></label>' : ''}
+        <p id="speechConfigError" class="form-error" role="alert" hidden></p>
+        <p class="helper-note">此配置与 MiniMax 日程解析接口分别保存，Key 不进入日程备份。转写按你选择的语音服务计费。</p>
+      </div></form>`, 'speech-config');
+  }
+  function speechFormData() {
+    const form = document.getElementById('speechApiForm');
+    if (!form) return null;
+    const data = new FormData(form);
+    return { endpoint: String(data.get('endpoint') || '').trim(), key: String(data.get('key') || '').trim(), model: String(data.get('model') || '').trim(), language: String(data.get('language') || ''), removeKey: data.has('removeKey') };
+  }
+  function saveSpeechConfig() {
+    const data = speechFormData(); if (!data) return;
+    try {
+      const result = JSON.parse(call('saveSpeechConfig', JSON.stringify(data)));
+      if (!result.ok) throw Error(result.error || '语音配置未能保存');
+      const returnToInput = speechReturnToInput;
+      closeSheet();
+      if (returnToInput) { activeInput = 'voice'; renderSpeech(); } else render(true);
+      toast('语音接口已保存');
+    } catch (error) {
+      const output = document.getElementById('speechConfigError');
+      output.textContent = error.message; output.hidden = false; output.scrollIntoView({ block: 'nearest' });
+    }
+  }
+  function fetchSpeechModels(button) {
+    const data = speechFormData(); if (!data) return;
+    const form = document.getElementById('speechApiForm');
+    const fingerprint = JSON.stringify(data);
+    button.disabled = true;
+    const note = document.getElementById('speechModelsNote'); note.textContent = '正在获取模型…';
+    nativeRequest(id => call('listSpeechModels', id, JSON.stringify(data)), result => {
+      if (document.getElementById('speechApiForm') !== form) return;
+      button.disabled = false;
+      if (fingerprint !== JSON.stringify(speechFormData())) { note.textContent = '配置已更改，请重新获取模型。'; return; }
+      if (!result.ok) { note.textContent = result.error + '；也可以直接填写模型名。'; return; }
+      const models = result.data.models || [];
+      document.getElementById('speech-model-list').innerHTML = models.map(name => `<option value="${escape(name)}"></option>`).join('');
+      note.textContent = `获取到 ${models.length} 个模型，请选择服务支持的语音模型。`;
+    });
   }
 
   /* -------- 预览 -------- */
@@ -1799,7 +1990,7 @@
     try { start(id); } catch (error) {
       nativeRequests.delete(id);
       busy(false);
-      toast(error.message || '操作未完成，请重试');
+      handler({ id, ok: false, error: error.message || '操作未完成，请重试' });
     }
   }
 
@@ -1855,6 +2046,15 @@
       case 'complete': toggleComplete(target.dataset.id, target.dataset.date); break;
       case 'filter': state.filter = target.dataset.filter; render(); break;
 
+      case 'choose-voice': editingId = null; openAi('voice'); break;
+      case 'speech-start': startSpeechRecording(); break;
+      case 'speech-stop': stopSpeechRecording(); break;
+      case 'speech-import': importSpeechAudio(); break;
+      case 'speech-transcribe': transcribeSpeech(); break;
+      case 'speech-config': showSpeechConfig(); break;
+      case 'speech-models': fetchSpeechModels(target); break;
+      case 'speech-cancel': cleanupSpeech(); renderSpeech(); break;
+      case 'speech-clear': cleanupSpeech(); call('discardAudio'); voice.audio = null; voice.error = ''; renderSpeech(); break;
       case 'choose-manual': openManual(); break;
       case 'choose-ai': openAi('text', { resetImage: true }); break;
       case 'ai-tab': openAi(target.dataset.input); break;
@@ -1944,10 +2144,16 @@
       if (events) commitDrafts(events);
       return;
     }
+    if (event.target.id === 'speechApiForm') { event.preventDefault(); saveSpeechConfig(); return; }
     if (event.target.id === 'apiForm') { event.preventDefault(); saveApiConfig(true); }
   });
 
   document.addEventListener('input', event => {
+    if (sheetMode === 'voice-input' && event.target.id === 'noticeInput') {
+      voice.text = event.target.value;
+      const button = sheet.querySelector('[data-action="analyze"]');
+      if (button) button.disabled = !voice.text.trim() || !apiConfig().hasKey || !apiConfig().model || voice.phase !== 'idle';
+    }
     const slider = event.target.dataset.slider;
     if (slider) {
       const value = Number(event.target.value);
@@ -1969,6 +2175,10 @@
 
   document.addEventListener('change', event => {
     const target = event.target;
+    if ((target.id === 'speech-key' || target.id === 'speech-endpoint') && document.getElementById('speech-endpoint')?.value && (document.getElementById('speech-key')?.value || speechConfig().hasKey)) {
+      const button = sheet.querySelector('[data-action="speech-models"]'); if (button && !button.disabled) fetchSpeechModels(button);
+      return;
+    }
     if (target.id === 'api-region') {
       const url = document.getElementById('api-base-url');
       if (url && target.value !== 'custom') {
@@ -2057,12 +2267,17 @@
     }
 
     const requestedText = noticeText;
+    const requestedImage = pendingImage?.token;
+    const wasVoice = activeInput === 'voice';
+    const voiceGeneration = voice.generation;
+    if (wasVoice) { voice.phase = 'extracting'; renderSpeech(); button = sheet.querySelector('[data-action="analyze"]'); }
     button.disabled = true;
     button.innerHTML = `<span class="spinner"></span> 正在识别…`;
 
     const finish = () => {
+      if (wasVoice && voice.generation === voiceGeneration) { voice.phase = 'idle'; if (sheetMode === 'voice-input') renderSpeech(); }
       const current = sheet.querySelector('[data-action="analyze"]');
-      if (current) { current.disabled = false; current.innerHTML = `${icon('spark')} 开始识别`; }
+      if (current) { current.disabled = false; current.innerHTML = `${icon('spark')} ${activeInput === 'voice' ? '提取日程' : '开始识别'}`; }
     };
 
     const handler = result => {
@@ -2082,7 +2297,7 @@
     };
 
     nativeRequest(id => {
-      if (isImage) call('analyzeImage', id, requestedText, messageDate);
+      if (isImage) call('analyzeImage', id, requestedImage, messageDate);
       else call('analyze', id, requestedText, messageDate);
     }, handler);
   }
@@ -2192,7 +2407,7 @@
   function showAbout() {
     let license = '';
     try { license = call('license'); } catch (_) { }
-    showSheet(`${sheetHeader('关于有期', '0.2.2 · 个人安卓版')}
+    showSheet(`${sheetHeader('关于有期', '0.3.0 · 个人安卓版')}
       <div class="sheet-body">
         <p class="helper-note">基于 Fossify Calendar 二次开发，使用其本地数据库、重复规则引擎与 ICS 导入。</p>
         <p class="helper-note">日程识别的原文与图片会发送到你自己填写的 API 地址。应用没有自建转发服务器，密钥使用 Android Keystore 加密后单独保存，不写入日志、不进入备份。</p>
@@ -2223,6 +2438,13 @@
 
   /* -------------------------------------------------原生回调与对外接口 */
   window.YouqiNativeResult = result => {
+    if (result.id === 'speech-stopped' || result.id === 'speech-interrupted') {
+      voice.generation++;
+      voice.phase = 'idle'; clearInterval(voice.timer);
+      if (result.ok) { voice.audio = result.data; voice.error = ''; } else voice.error = result.error;
+      if (sheetMode === 'voice-input') renderSpeech();
+      return;
+    }
     if (result.id === 'shared') {
       noticeText = result.data?.text || '';
       openAi('text', { resetImage: true });

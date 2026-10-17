@@ -1,5 +1,7 @@
 package org.fossify.calendar.youqi
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
@@ -45,6 +47,11 @@ class YouqiActivity : AppCompatActivity() {
     private lateinit var root: FrameLayout
     private val store by lazy { YouqiStore(this) }
     private val miniMax by lazy { MiniMaxService(this) }
+    private val speech by lazy { SpeechService(this) }
+    private var voiceAudio: SpeechAudio? = null
+    @Synchronized private fun audio() = voiceAudio ?: SpeechAudio(this).also { voiceAudio = it }
+    private var pendingMicRequest: String? = null
+    private val speechGeneration = java.util.concurrent.atomic.AtomicInteger()
     private val filesExecutor = Executors.newSingleThreadExecutor()
     private val networkExecutor = Executors.newSingleThreadExecutor()
     private var ready = false
@@ -223,6 +230,10 @@ class YouqiActivity : AppCompatActivity() {
                 picker.putExtra(Intent.EXTRA_TITLE, "有期备份-${LocalDate.now()}.json")
             }
             imageKinds -> picker.type = "image/*"
+            kind == "audio" -> {
+                picker.type = "*/*"
+                picker.putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/*", "video/mp4", "video/webm", "application/ogg"))
+            }
             kind == "ics" -> {
                 picker.type = "*/*"
                 picker.putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("text/calendar", "application/ics", "text/plain", "application/octet-stream"))
@@ -254,6 +265,10 @@ class YouqiActivity : AppCompatActivity() {
                     stream.use { it.write(content) }
                     send(id, JSONObject().put("exported", true))
                 } catch (error: Exception) { send(id, error = errorMessage(error)) }
+            }
+            "audio" -> filesExecutor.execute {
+                try { send(id, audio().importAudio(uri).json()) }
+                catch (error: Exception) { send(id, error = errorMessage(error)) }
             }
             "image" -> filesExecutor.execute { handleImagePick(uri, id) }
             "background" -> filesExecutor.execute { handleBackgroundPick(uri, id) }
@@ -394,6 +409,40 @@ class YouqiActivity : AppCompatActivity() {
         }
     }
 
+    private fun beginRecording(id: String) {
+        if (isFinishing || isDestroyed) { send(id, error = "页面已关闭，请重新开始"); return }
+        try {
+            audio().start {
+                runOnUiThread {
+                    if (voiceAudio?.isRecording() == true) {
+                        try { send("speech-stopped", audio().stop().json().put("automatic", true)) }
+                        catch (error: Exception) { send("speech-stopped", error = errorMessage(error)) }
+                    }
+                }
+            }
+            send(id, JSONObject().put("recording", true).put("maxSeconds", 300))
+        } catch (error: Exception) { send(id, error = errorMessage(error)) }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_AUDIO) return
+        val id = pendingMicRequest ?: return
+        pendingMicRequest = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) beginRecording(id)
+        else send(id, error = "麦克风权限未开启，可在系统设置中授权，也可以使用下方导入音频")
+    }
+
+    override fun onStop() {
+        if (voiceAudio?.isRecording() == true) {
+            try { send("speech-stopped", audio().stop().json().put("interrupted", true)) }
+            catch (error: Exception) { send("speech-interrupted", error = errorMessage(error)) }
+        }
+        pendingMicRequest?.let { send(it, error = "录音已取消"); pendingMicRequest = null }
+        super.onStop()
+    }
+
     inner class Bridge {
         @JavascriptInterface fun setAppearance(dark: Boolean) = runOnUiThread {
             if (isDestroyed || isFinishing) return@runOnUiThread
@@ -454,6 +503,41 @@ class YouqiActivity : AppCompatActivity() {
             networkExecutor.execute { try { send(id, miniMax.listModels(content)) } catch (error: Exception) { send(id, error = errorMessage(error)) } }
         }
 
+        @JavascriptInterface fun getSpeechConfig(): String = speech.config().toString()
+        @JavascriptInterface fun saveSpeechConfig(content: String): String = try {
+            JSONObject().put("ok", true).put("config", speech.saveConfig(content)).toString()
+        } catch (error: Exception) { JSONObject().put("ok", false).put("error", errorMessage(error)).toString() }
+        @JavascriptInterface fun listSpeechModels(id: String, content: String) {
+            networkExecutor.execute { try { send(id, speech.listModels(content)) } catch (error: Exception) { send(id, error = errorMessage(error)) } }
+        }
+        @JavascriptInterface fun startRecording(id: String) = runOnUiThread {
+            if (pendingMicRequest != null || voiceAudio?.isRecording() == true) { send(id, error = "录音已开始或正在等待权限"); return@runOnUiThread }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) beginRecording(id)
+            else { pendingMicRequest = id; requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO) }
+        }
+        @JavascriptInterface fun stopRecording(id: String) = runOnUiThread {
+            try { send(id, audio().stop().json()) } catch (error: Exception) { send(id, error = errorMessage(error)) }
+        }
+        @JavascriptInterface fun cancelRecording() = runOnUiThread {
+            pendingMicRequest?.let { send(it, error = "录音已取消"); pendingMicRequest = null }
+            voiceAudio?.cancelRecording()
+        }
+        @JavascriptInterface fun pickAudio(id: String) { openPicker("audio", id) }
+        @JavascriptInterface fun discardAudio() = runOnUiThread { voiceAudio?.discard() }
+        @JavascriptInterface fun cancelTranscription() { speechGeneration.incrementAndGet(); speech.cancel() }
+        @JavascriptInterface fun transcribeAudio(id: String, token: String) {
+            val generation = speechGeneration.incrementAndGet()
+            networkExecutor.execute {
+                try {
+                    check(generation == speechGeneration.get()) { "语音识别已取消" }
+                    val clip = audio().clip(token)
+                    val result = speech.transcribe(clip.file, clip.mime)
+                    check(generation == speechGeneration.get()) { "语音识别已取消" }
+                    send(id, result)
+                } catch (error: Exception) { send(id, error = errorMessage(error)) }
+            }
+        }
+
         @JavascriptInterface fun pickImage(id: String) { openPicker("image", id) }
         @JavascriptInterface fun pickBackground(id: String) { openPicker("background", id) }
         @JavascriptInterface fun importIcs(id: String) { openPicker("ics", id) }
@@ -481,6 +565,8 @@ class YouqiActivity : AppCompatActivity() {
     override fun onDestroy() {
         ready = false
         pendingImage = null
+        voiceAudio?.close()
+        speech.cancel()
         networkExecutor.shutdownNow()
         filesExecutor.shutdownNow()
         if (::web.isInitialized) {
@@ -493,6 +579,7 @@ class YouqiActivity : AppCompatActivity() {
 
     private companion object {
         const val REQUEST_PICKER = 9081
+        const val REQUEST_AUDIO = 9082
         const val MAX_IMAGE_BYTES = 24_000_000
         const val MAX_MODEL_EDGE = 1600
         const val MAX_BACKGROUND_EDGE = 2000

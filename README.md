@@ -1,4 +1,4 @@
-# 有期 0.2.2
+# 有期 0.3.0
 
 独立维护的个人安卓日程与待办应用。源码、反馈及版本管理统一在 [1qiuyu/youqi-android](https://github.com/1qiuyu/youqi-android)。
 
@@ -15,6 +15,7 @@
 - 填写 Key 后读取 /models，使用模型下拉列表选择，保留 HTTP 与服务端错误详情。
 - 连接测试、真实通知解析。
 - 原消息参考日期、结构化结果预览、修改后确认保存。
+- 手机前台录音或导入音频，经独立的自定义语音API转写；文字可修改，再交给现有AI提取日程。
 - 使用 Fossify 的 Room 数据库、Event/Task 模型、重复规则引擎和 ICS 导入。
 - Android 系统文件选择器导入课表、导出及恢复完整 JSON 备份。
 - API Key 使用 Android Keystore AES-GCM 加密，单独保存，备份排除密钥。
@@ -47,21 +48,21 @@ sdk.dir=/你的/Android/sdk/路径
 ./gradlew :app:assembleFossDebug
 ```
 
-APK：`app/build/outputs/apk/foss/debug/youqi-7-foss-debug.apk`。
+APK：`app/build/outputs/apk/foss/debug/youqi-8-foss-debug.apk`。
 
-测试版包名 `com.youqi.calendar.debug`，独立于原 Fossify Calendar。版本名 0.2.2，版本号 7。测试版使用调试签名；同一台构建机保留签名密钥后可继续覆盖更新。
+测试版包名 `com.youqi.calendar.debug`，独立于原 Fossify Calendar。版本名 0.3.0，版本号 8。测试版使用调试签名；同一台构建机保留签名密钥后可继续覆盖更新。
 
 ## 验证
 
 已在 Android 15 ARM64 官方模拟器上验证本地数据库、每周重复、单次完成、跳过一次、备份恢复、重复 ICS 导入、密钥加密，以及真实 WebView 的手动录入流程。
 
-专用测试类：`org.fossify.calendar.youqi.YouqiIntegrationTest` 和 `org.fossify.calendar.youqi.YouqiApiTest`。
+本版专用测试类：`org.fossify.calendar.youqi.YouqiSpeechTest`、`org.fossify.calendar.youqi.YouqiApiTest` 和 `org.fossify.calendar.youqi.YouqiVisibilityTest`。
 
 这些测试会清空测试应用的数据，只在空白专用模拟器上运行：
 
 ```bash
 ANDROID_SERIAL=你的模拟器序号 ./gradlew :app:connectedFossDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=org.fossify.calendar.youqi.YouqiApiTest,org.fossify.calendar.youqi.YouqiIntegrationTest
+  -Pandroid.testInstrumentationRunnerArguments.class=org.fossify.calendar.youqi.YouqiSpeechTest,org.fossify.calendar.youqi.YouqiApiTest,org.fossify.calendar.youqi.YouqiVisibilityTest
 ```
 
 0.1.1 在专用模拟器通过 8 项 API 与日历测试（API 响应使用 fixtures），并通过 8 项浏览器 UI 检查。已在用户授权的 iQOO 15 覆盖安装，使用手机本机保存的 Key 成功读取 9 个模型，并验证 MiniMax-M3 连接成功。未提取或输出真实 Key；真实通知识别质量与真实 ThuInfo 文件仍待试用。
@@ -110,3 +111,24 @@ ANDROID_SERIAL=你的模拟器序号 ./gradlew :app:connectedFossDebugAndroidTes
 私有仓库：`1qiuyu/youqi-android`。本仓库只保存源代码，编译和测试在本机执行。
 GitHub Actions 关闭，不保留工作流或定时自动化；不使用 Git LFS、云构建、云部署或付费附加服务。
 提交内容排除 API Key、签名私钥、手机日程数据库、机器路径配置、构建输出和缓存。
+
+
+## 0.3.0 · 语音录入
+
+入口为「＋ → 语音添加」，或 AI 智能提取中的「语音」页签。录音按钮为主要入口，「导入音频文件」放在下方小选项。
+
+### 配置与使用
+
+1. 在「设置 → 语音识别 API」填写完整 HTTPS 转写地址，例如 `https://你的服务/v1/audio/transcriptions`，以及语音服务自己的 Key 和模型。
+2. 支持 OpenAI/Whisper 兼容的 `multipart/form-data` 接口（file、model、response_format=json、可选language），响应为含 `text` 的 JSON。服务可以提供 `/models` 列表，也可直接填写语音模型名；语音服务无需鉴权时 Key 可留空。不兼容这一协议的服务需要另写适配。
+3. 点击录音按钮，说完后停止，再点「转为文字」。已有音频从下方导入。修改识别出的文字后点「提取日程」，逐项确认后保存。
+
+录音最长5分钟，离开应用会停止并保留有效录音；关闭录音面板时取消正在录制的内容。导入支持M4A、MP3、WAV、FLAC、OGG、WEBM及含音轨的MP4等格式，最大24 MB。不申请读取整个媒体库的权限，只使用系统文件选择器。
+
+首次录音需要安卓麦克风授权。只有点击转写才上传音频；API Key 使用独立的Android Keystore密钥加密，语音配置与现有MiniMax配置互不覆盖，不进入日程备份。更换接口主机时必须重新填写或删除原Key，避免把已保存的Key发往新主机。
+
+临时录音和导入的音频仅留在应用私有缓存，移除音频、销毁页面所在的Activity或下次初始化时清理；失败重试时保留音频，取消后不接收迟到结果。真实识别能力、格式支持和费用取决于配置的语音服务；MiniMax Coding Plan的文本配置不能自动代替语音转写服务。
+
+本版新增11项语音浏览器交互检查，原有12项日程交互回归通过；独立模拟器实际执行13项原生测试，0跳过，覆盖multipart上传、错误脱敏、音频读取、Key隔离和原有API/显示存储。
+
+实体iQOO 15已安装0.3.0，通过一次短录音、切后台停止并保留音频、系统文件选择器及取消、清除缓存检查。原日程与文本API配置摘要升级前后相同。测试音频已删除，未上传到外部服务；尚未配置真实语音API，真实转写效果待配置后验证。

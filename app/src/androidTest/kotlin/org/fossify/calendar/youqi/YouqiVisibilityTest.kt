@@ -18,7 +18,7 @@ class YouqiVisibilityTest {
     private lateinit var store: YouqiStore
     @Before fun prepare() {
         // These database tests are restricted to a disposable emulator.
-        assumeTrue(Build.MODEL.contains("sdk") || Build.FINGERPRINT.contains("generic"))
+        assumeTrue(Build.MODEL.contains("sdk", ignoreCase = true) || Build.FINGERPRINT.contains("generic"))
         store = YouqiStore(ApplicationProvider.getApplicationContext<Context>())
         store.save("[]")
     }
