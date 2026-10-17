@@ -1,0 +1,20 @@
+import { cwd } from "node:process";
+import { join } from "node:path";
+
+export const SHOULD_LOG = process.env.LOG_ENABLED === "true";
+
+export const ASSETS_DIR = join(cwd(), "../../app/src/main/assets");
+export const HOLIDAYS_DIR = "holidays";
+
+export const UNSUPPORTED_COUNTRIES = {
+    "IN": "India", // TODO: https://github.com/commenthol/date-holidays/issues/137
+    "LK": "Sri Lanka", // TODO: https://github.com/commenthol/date-holidays/issues/528
+};
+
+export const START_YEAR = new Date().getFullYear(); // start with current year
+export const END_YEAR = START_YEAR + 1;
+export const FIXED_DATE_START_YEAR = 1980; // start recurring events from start of Unix epoch
+
+// https://www.npmjs.com/package/date-holidays#types-of-holidays
+export const TYPE_PUBLIC = ["public", "bank"];
+export const TYPE_OTHER = ["optional", "school", "observance"];

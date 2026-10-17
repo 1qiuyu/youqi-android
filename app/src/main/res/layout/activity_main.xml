@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_coordinator"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <org.fossify.commons.views.MySearchMenu
+        android:id="@+id/main_menu"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <androidx.coordinatorlayout.widget.CoordinatorLayout
+        android:id="@+id/calendar_coordinator"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none"
+        app:layout_behavior="com.google.android.material.appbar.AppBarLayout$ScrollingViewBehavior">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/main_holder"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <org.fossify.calendar.helpers.SmartSwipeRefreshLayout
+                android:id="@+id/swipe_refresh_layout"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                app:layout_constraintBottom_toTopOf="@+id/quick_calendar_filter"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <FrameLayout
+                    android:id="@+id/fragments_holder"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+            </org.fossify.calendar.helpers.SmartSwipeRefreshLayout>
+
+            <RelativeLayout
+                android:id="@+id/fab_extended_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:alpha="0"
+                android:visibility="gone" />
+
+            <org.fossify.commons.views.MyTextView
+                android:id="@+id/fab_event_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:alpha="0"
+                android:paddingVertical="@dimen/small_margin"
+                android:paddingEnd="@dimen/activity_margin"
+                android:text="@string/event"
+                android:textSize="@dimen/big_text_size"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="@+id/calendar_fab"
+                app:layout_constraintEnd_toStartOf="@+id/calendar_fab"
+                app:layout_constraintTop_toTopOf="@+id/calendar_fab" />
+
+            <ImageView
+                android:id="@+id/fab_task_icon"
+                android:layout_width="@dimen/secondary_fab_size"
+                android:layout_height="@dimen/secondary_fab_size"
+                android:layout_marginBottom="@dimen/activity_margin"
+                android:alpha="0"
+                android:background="@drawable/circle_background"
+                android:padding="@dimen/medium_margin"
+                android:src="@drawable/ic_task_vector"
+                android:visibility="gone"
+                app:layout_constraintBottom_toTopOf="@+id/calendar_fab"
+                app:layout_constraintEnd_toEndOf="@+id/calendar_fab"
+                app:layout_constraintStart_toStartOf="@+id/calendar_fab" />
+
+            <org.fossify.commons.views.MyTextView
+                android:id="@+id/fab_task_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:alpha="0"
+                android:paddingVertical="@dimen/small_margin"
+                android:paddingEnd="@dimen/activity_margin"
+                android:text="@string/task"
+                android:textSize="@dimen/big_text_size"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="@+id/fab_task_icon"
+                app:layout_constraintEnd_toStartOf="@+id/calendar_fab"
+                app:layout_constraintTop_toTopOf="@+id/fab_task_icon" />
+
+            <org.fossify.commons.views.MyFloatingActionButton
+                android:id="@+id/calendar_fab"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_marginEnd="@dimen/activity_margin"
+                android:layout_marginBottom="@dimen/activity_margin"
+                android:contentDescription="@string/new_event"
+                android:src="@drawable/ic_plus_vector"
+                app:backgroundTint="@color/color_primary"
+                app:layout_constraintBottom_toTopOf="@+id/quick_calendar_filter"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:rippleColor="@color/pressed_item_foreground" />
+
+            <org.fossify.commons.views.MyRecyclerView
+                android:id="@+id/quick_calendar_filter"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:orientation="horizontal"
+                android:overScrollMode="never"
+                app:layoutManager="org.fossify.commons.views.MyLinearLayoutManager"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:rippleColor="@color/pressed_item_foreground" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <RelativeLayout
+            android:id="@+id/search_holder"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:alpha="0"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone">
+
+            <org.fossify.commons.views.MyTextView
+                android:id="@+id/search_placeholder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_centerHorizontal="true"
+                android:layout_marginTop="@dimen/activity_margin"
+                android:alpha="0.8"
+                android:gravity="center"
+                android:paddingStart="@dimen/activity_margin"
+                android:paddingEnd="@dimen/activity_margin"
+                android:text="@string/no_items_found"
+                android:textSize="@dimen/bigger_text_size"
+                android:textStyle="italic" />
+
+            <org.fossify.commons.views.MyTextView
+                android:id="@+id/search_placeholder_2"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_below="@+id/search_placeholder"
+                android:layout_centerHorizontal="true"
+                android:alpha="0.8"
+                android:gravity="center"
+                android:paddingStart="@dimen/activity_margin"
+                android:paddingTop="@dimen/medium_margin"
+                android:paddingEnd="@dimen/activity_margin"
+                android:paddingBottom="@dimen/medium_margin"
+                android:text="@string/type_2_characters"
+                android:textSize="@dimen/bigger_text_size"
+                android:textStyle="italic" />
+
+            <org.fossify.commons.views.MyRecyclerView
+                android:id="@+id/search_results_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:overScrollMode="never"
+                android:scrollbars="vertical"
+                app:layoutManager="org.fossify.commons.views.MyLinearLayoutManager" />
+
+        </RelativeLayout>
+    </androidx.coordinatorlayout.widget.CoordinatorLayout>
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

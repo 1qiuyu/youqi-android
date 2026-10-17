@@ -1,0 +1,1 @@
+-keep class org.fossify.calendar.models.** { *; }

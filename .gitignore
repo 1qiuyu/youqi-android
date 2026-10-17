@@ -1,0 +1,33 @@
+*.iml
+*.aab
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+keystore.jks
+keystore.properties
+fastlane/fastlane.json
+fastlane/report.xml
+.kotlin/
+
+# Local builds and credentials
+**/build/
+*.apk
+*.apks
+*.keystore
+*.jks
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+# This repository only stores source; cloud workflows stay disabled.
+.github/workflows/
+.github/dependabot.yml

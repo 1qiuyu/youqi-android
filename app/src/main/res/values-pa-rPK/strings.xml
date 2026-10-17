@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="first_f">پہلا</string>
+    <string name="second_f">دوجا</string>
+    <string name="third_f">تیجا</string>
+    <string name="app_launcher_name">کیلینڈر</string>
+    <string name="daily_view">دن دا</string>
+    <string name="weekly_view">ہفتے دا</string>
+    <string name="monthly_view">مہیناوار درش</string>
+    <string name="monthly_daily_view">مہیناوار تے دنوار درش</string>
+    <string name="yearly_view">سالانہ درش</string>
+    <string name="simple_event_list">سادے گھٹنے دی قسم</string>
+    <string name="weekly">ہفتاواری</string>
+    <string name="weeks_raw">ہفتے</string>
+    <string name="months_raw">مہینے</string>
+    <string name="years_raw">سال</string>
+    <string name="forever">ہمیشہ لئی</string>
+    <string name="times">سمیں</string>
+    <string name="repeat">دُہراؤ</string>
+    <string name="every_m">سارے</string>
+    <string name="first_m">پہلا</string>
+    <string name="second_m">سکنٹ</string>
+    <string name="third_m">تیجا</string>
+    <string name="fourth_m">چوتھا</string>
+    <string name="fifth_m">پنجواں</string>
+    <string name="last_m">پچھلے</string>
+    <string name="every_f">سارے</string>
+    <string name="fourth_f">چوتھا</string>
+    <string name="fifth_f">پنجواں</string>
+    </resources>

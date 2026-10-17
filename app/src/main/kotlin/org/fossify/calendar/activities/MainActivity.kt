@@ -1,0 +1,1582 @@
+package org.fossify.calendar.activities
+
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.content.pm.ShortcutInfo
+import android.graphics.drawable.Icon
+import android.graphics.drawable.LayerDrawable
+import android.os.Bundle
+import android.os.Handler
+import android.provider.ContactsContract.CommonDataKinds
+import android.provider.ContactsContract.Contacts
+import android.provider.ContactsContract.Data
+import android.view.MenuItem
+import android.widget.Toast
+import androidx.core.graphics.drawable.toDrawable
+import androidx.fragment.app.FragmentManager
+import org.fossify.calendar.R
+import org.fossify.calendar.adapters.EventListAdapter
+import org.fossify.calendar.adapters.QuickFilterCalendarAdapter
+import org.fossify.calendar.databases.EventsDatabase
+import org.fossify.calendar.databinding.ActivityMainBinding
+import org.fossify.calendar.dialogs.ManageHolidaysDialog
+import org.fossify.calendar.dialogs.SelectCalendarsDialog
+import org.fossify.calendar.dialogs.SetRemindersDialog
+import org.fossify.calendar.extensions.addImportIdsToTasks
+import org.fossify.calendar.extensions.calDAVHelper
+import org.fossify.calendar.extensions.config
+import org.fossify.calendar.extensions.eventsDB
+import org.fossify.calendar.extensions.eventsHelper
+import org.fossify.calendar.extensions.getEventListItems
+import org.fossify.calendar.extensions.getFirstDayOfWeek
+import org.fossify.calendar.extensions.launchNewEventIntent
+import org.fossify.calendar.extensions.launchNewTaskIntent
+import org.fossify.calendar.extensions.seconds
+import org.fossify.calendar.extensions.tryImportEventsFromFile
+import org.fossify.calendar.extensions.updateWidgets
+import org.fossify.calendar.fragments.DayFragmentsHolder
+import org.fossify.calendar.fragments.EventListFragment
+import org.fossify.calendar.fragments.MonthDayFragmentsHolder
+import org.fossify.calendar.fragments.MonthFragmentsHolder
+import org.fossify.calendar.fragments.MyFragmentHolder
+import org.fossify.calendar.fragments.WeekFragmentsHolder
+import org.fossify.calendar.fragments.YearFragmentsHolder
+import org.fossify.calendar.helpers.ANNIVERSARY_EVENT
+import org.fossify.calendar.helpers.BIRTHDAY_EVENT
+import org.fossify.calendar.helpers.DAILY_VIEW
+import org.fossify.calendar.helpers.DAY_CODE
+import org.fossify.calendar.helpers.EVENTS_LIST_VIEW
+import org.fossify.calendar.helpers.EVENT_ID
+import org.fossify.calendar.helpers.EVENT_OCCURRENCE_TS
+import org.fossify.calendar.helpers.FETCH_INTERVAL
+import org.fossify.calendar.helpers.FLAG_ALL_DAY
+import org.fossify.calendar.helpers.FLAG_MISSING_YEAR
+import org.fossify.calendar.helpers.Formatter
+import org.fossify.calendar.helpers.Formatter.DAYCODE_PATTERN
+import org.fossify.calendar.helpers.HolidayHelper
+import org.fossify.calendar.helpers.INITIAL_EVENTS
+import org.fossify.calendar.helpers.IS_TASK
+import org.fossify.calendar.helpers.IcsImporter.ImportResult
+import org.fossify.calendar.helpers.LAST_VIEW
+import org.fossify.calendar.helpers.MAX_SEARCH_YEAR
+import org.fossify.calendar.helpers.MIN_EVENTS_TRESHOLD
+import org.fossify.calendar.helpers.MONTHLY_DAILY_VIEW
+import org.fossify.calendar.helpers.MONTHLY_VIEW
+import org.fossify.calendar.helpers.REPEAT_SAME_DAY
+import org.fossify.calendar.helpers.SHORTCUT_NEW_EVENT
+import org.fossify.calendar.helpers.SHORTCUT_NEW_TASK
+import org.fossify.calendar.helpers.SOURCE_CONTACT_ANNIVERSARY
+import org.fossify.calendar.helpers.SOURCE_CONTACT_BIRTHDAY
+import org.fossify.calendar.helpers.UPDATE_BOTTOM
+import org.fossify.calendar.helpers.UPDATE_TOP
+import org.fossify.calendar.helpers.VIEW_TO_OPEN
+import org.fossify.calendar.helpers.WEEKLY_VIEW
+import org.fossify.calendar.helpers.WEEK_START_DATE_TIME
+import org.fossify.calendar.helpers.YEAR
+import org.fossify.calendar.helpers.YEARLY_VIEW
+import org.fossify.calendar.helpers.YEAR_TO_OPEN
+import org.fossify.calendar.helpers.getActivityToOpen
+import org.fossify.calendar.jobs.CalDAVUpdateListener
+import org.fossify.calendar.models.Event
+import org.fossify.calendar.models.ListEvent
+import org.fossify.calendar.models.ListItem
+import org.fossify.calendar.models.ListSectionDay
+import org.fossify.commons.dialogs.ConfirmationDialog
+import org.fossify.commons.dialogs.RadioGroupDialog
+import org.fossify.commons.extensions.adjustAlpha
+import org.fossify.commons.extensions.appLaunched
+import org.fossify.commons.extensions.applyColorFilter
+import org.fossify.commons.extensions.areDigitsOnly
+import org.fossify.commons.extensions.beGone
+import org.fossify.commons.extensions.beGoneIf
+import org.fossify.commons.extensions.beVisible
+import org.fossify.commons.extensions.beVisibleIf
+import org.fossify.commons.extensions.checkWhatsNew
+import org.fossify.commons.extensions.convertToBitmap
+import org.fossify.commons.extensions.fadeIn
+import org.fossify.commons.extensions.fadeOut
+import org.fossify.commons.extensions.getColoredDrawableWithColor
+import org.fossify.commons.extensions.getContrastColor
+import org.fossify.commons.extensions.getIntValue
+import org.fossify.commons.extensions.getLongValue
+import org.fossify.commons.extensions.getMyContactsCursor
+import org.fossify.commons.extensions.getProperBackgroundColor
+import org.fossify.commons.extensions.getProperPrimaryColor
+import org.fossify.commons.extensions.getProperTextColor
+import org.fossify.commons.extensions.getStringValue
+import org.fossify.commons.extensions.hasPermission
+import org.fossify.commons.extensions.hideKeyboard
+import org.fossify.commons.extensions.isGone
+import org.fossify.commons.extensions.isVisible
+import org.fossify.commons.extensions.launchMoreAppsFromUsIntent
+import org.fossify.commons.extensions.queryCursor
+import org.fossify.commons.extensions.shortcutManager
+import org.fossify.commons.extensions.showErrorToast
+import org.fossify.commons.extensions.toast
+import org.fossify.commons.extensions.updateTextColors
+import org.fossify.commons.extensions.viewBinding
+import org.fossify.commons.helpers.LICENSE_JODA
+import org.fossify.commons.helpers.MyContactsContentProvider
+import org.fossify.commons.helpers.PERMISSION_READ_CALENDAR
+import org.fossify.commons.helpers.PERMISSION_READ_CONTACTS
+import org.fossify.commons.helpers.PERMISSION_WRITE_CALENDAR
+import org.fossify.commons.helpers.ensureBackgroundThread
+import org.fossify.commons.helpers.getDateFormats
+import org.fossify.commons.helpers.getDateFormatsWithYear
+import org.fossify.commons.helpers.isNougatMR1Plus
+import org.fossify.commons.helpers.isNougatPlus
+import org.fossify.commons.interfaces.RefreshRecyclerViewListener
+import org.fossify.commons.models.FAQItem
+import org.fossify.commons.models.RadioItem
+import org.fossify.commons.models.Release
+import org.fossify.commons.models.SimpleContact
+import org.fossify.commons.views.MyLinearLayoutManager
+import org.fossify.commons.views.MyRecyclerView
+import org.joda.time.DateTime
+import org.joda.time.DateTimeZone
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+class MainActivity : SimpleActivity(), RefreshRecyclerViewListener {
+    override var isSearchBarEnabled = true
+
+    private var showCalDAVRefreshToast = false
+    private var mShouldFilterBeVisible = false
+    private var mLatestSearchQuery = ""
+    private var shouldGoToTodayBeVisible = false
+    private var goToTodayButton: MenuItem? = null
+    private var updatingHolidays = false
+
+    private var mStoredTextColor = 0
+    private var mStoredBackgroundColor = 0
+    private var mStoredPrimaryColor = 0
+    private var mStoredDayCode = ""
+    private var mStoredFirstDayOfWeek = 0
+    private var mStoredMidnightSpan = true
+    private var mStoredUse24HourFormat = false
+    private var mStoredDimPastEvents = true
+    private var mStoredDimCompletedTasks = true
+    private var mStoredHighlightWeekends = false
+    private var mStoredStartWeekWithCurrentDay = false
+    private var mStoredHighlightWeekendsColor = 0
+
+    // search results have endless scrolling, so reaching the top/bottom fetches further results
+    private var minFetchedSearchTS = 0L
+    private var maxFetchedSearchTS = 0L
+    private var searchResultEvents = ArrayList<Event>()
+    private var bottomItemAtRefresh: ListItem? = null
+
+    private val binding by viewBinding(ActivityMainBinding::inflate)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(binding.root)
+        appLaunched(org.fossify.calendar.BuildConfig.APPLICATION_ID)
+        setupOptionsMenu()
+        refreshMenuItems()
+        setupEdgeToEdge(
+            padBottomImeAndSystem = listOf(binding.searchHolder, binding.quickCalendarFilter),
+        )
+
+        config.initializeHolidayManagementNotice(org.fossify.calendar.BuildConfig.VERSION_CODE)
+        checkWhatsNewDialog()
+        binding.calendarFab.beVisibleIf(config.storedView != YEARLY_VIEW && config.storedView != WEEKLY_VIEW)
+        binding.calendarFab.setOnClickListener {
+            if (config.allowCreatingTasks) {
+                if (binding.fabExtendedOverlay.isVisible()) {
+                    openNewEvent()
+
+                    Handler().postDelayed({
+                        hideExtendedFab()
+                    }, 300)
+                } else {
+                    showExtendedFab()
+                }
+            } else {
+                openNewEvent()
+            }
+        }
+        binding.fabEventLabel.setOnClickListener { openNewEvent() }
+        binding.fabTaskLabel.setOnClickListener { openNewTask() }
+
+        binding.fabExtendedOverlay.setOnClickListener {
+            hideExtendedFab()
+        }
+
+        binding.fabTaskIcon.setOnClickListener {
+            openNewTask()
+
+            Handler().postDelayed({
+                hideExtendedFab()
+            }, 300)
+        }
+
+        storeStateVariables()
+
+        if (!hasPermission(PERMISSION_WRITE_CALENDAR) || !hasPermission(PERMISSION_READ_CALENDAR)) {
+            config.caldavSync = false
+        }
+
+        if (config.caldavSync) {
+            refreshCalDAVCalendars(false)
+        }
+
+        binding.swipeRefreshLayout.setOnRefreshListener {
+            refreshCalDAVCalendars(true)
+        }
+
+        checkIsViewIntent()
+
+        if (!checkIsOpenIntent() && savedInstanceState == null) {
+            updateViewPager()
+        }
+
+        if (supportFragmentManager.backStackEntryCount > 0) {
+            showBackNavigationArrow()
+        }
+
+        checkAppOnSDCard()
+
+        if (savedInstanceState == null) {
+            checkCalDAVUpdateListener()
+        }
+
+        addBirthdaysAnniversariesAtStart()
+        refreshHolidays()
+
+        addImportIdsToTasks {
+            refreshViewPager()
+        }
+
+        maybeRequestExactAlarmPermission()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (mStoredTextColor != getProperTextColor() || mStoredBackgroundColor != getProperBackgroundColor() || mStoredPrimaryColor != getProperPrimaryColor()
+            || mStoredDayCode != Formatter.getTodayCode() || mStoredDimPastEvents != config.dimPastEvents || mStoredDimCompletedTasks != config.dimCompletedTasks
+            || mStoredHighlightWeekends != config.highlightWeekends || mStoredHighlightWeekendsColor != config.highlightWeekendsColor
+        ) {
+            updateViewPager()
+        }
+
+        eventsHelper.getCalendars(this, false) {
+            val newShouldFilterBeVisible = it.size > 1 || config.displayCalendars.isEmpty()
+            if (newShouldFilterBeVisible != mShouldFilterBeVisible) {
+                mShouldFilterBeVisible = newShouldFilterBeVisible
+                refreshMenuItems()
+            }
+        }
+
+        if (config.storedView == WEEKLY_VIEW) {
+            if (mStoredFirstDayOfWeek != config.firstDayOfWeek || mStoredUse24HourFormat != config.use24HourFormat
+                || mStoredMidnightSpan != config.showMidnightSpanningEventsAtTop || mStoredStartWeekWithCurrentDay != config.startWeekWithCurrentDay
+            ) {
+                updateViewPager()
+            }
+        }
+
+        binding.apply {
+            mainMenu.updateColors()
+            storeStateVariables()
+            updateWidgets()
+            updateTextColors(calendarCoordinator)
+            fabExtendedOverlay.background =
+                getProperBackgroundColor().adjustAlpha(0.8f).toDrawable()
+            fabEventLabel.setTextColor(getProperTextColor())
+            fabTaskLabel.setTextColor(getProperTextColor())
+
+            fabTaskIcon.drawable.applyColorFilter(mStoredPrimaryColor.getContrastColor())
+            fabTaskIcon.background.applyColorFilter(mStoredPrimaryColor)
+
+            searchHolder.background = getProperBackgroundColor().toDrawable()
+            checkSwipeRefreshAvailability()
+            checkShortcuts()
+
+            if (!mainMenu.isSearchOpen) {
+                refreshMenuItems()
+            }
+        }
+
+        setupQuickFilter()
+
+        if (config.caldavSync) {
+            updateCalDAVEvents()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        storeStateVariables()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (!isChangingConfigurations) {
+            EventsDatabase.destroyInstance()
+            stopCalDAVUpdateListener()
+        }
+    }
+
+    fun refreshMenuItems() {
+        if (binding.fabExtendedOverlay.isVisible()) {
+            hideExtendedFab()
+        }
+
+        shouldGoToTodayBeVisible =
+            getCurrentFragment()?.shouldGoToTodayBeVisible() ?: false
+        binding.mainMenu.requireToolbar().menu.apply {
+            goToTodayButton = findItem(R.id.go_to_today)
+            findItem(R.id.print).isVisible = config.storedView != MONTHLY_DAILY_VIEW
+            findItem(R.id.filter).isVisible = mShouldFilterBeVisible
+            findItem(R.id.go_to_today).isVisible =
+                shouldGoToTodayBeVisible && !binding.mainMenu.isSearchOpen
+            findItem(R.id.go_to_date).isVisible = config.storedView != EVENTS_LIST_VIEW
+            findItem(R.id.refresh_caldav_calendars).isVisible = config.caldavSync
+            findItem(R.id.more_apps_from_us).isVisible =
+                resources.getBoolean(org.fossify.commons.R.bool.is_google_play_build)
+        }
+    }
+
+    private fun setupOptionsMenu() = binding.apply {
+        mainMenu.requireToolbar().inflateMenu(R.menu.menu_main)
+        mainMenu.toggleHideOnScroll(false)
+        mainMenu.setupMenu()
+
+        mainMenu.onSearchTextChangedListener = { text ->
+            searchQueryChanged(text)
+        }
+
+        mainMenu.requireToolbar().setOnMenuItemClickListener { menuItem ->
+            if (fabExtendedOverlay.isVisible()) {
+                hideExtendedFab()
+            }
+
+            when (menuItem.itemId) {
+                R.id.change_view -> showViewDialog()
+                R.id.go_to_today -> goToToday()
+                R.id.go_to_date -> showGoToDateDialog()
+                R.id.print -> printView()
+                R.id.filter -> showFilterDialog()
+                R.id.refresh_caldav_calendars -> refreshCalDAVCalendars(true)
+                R.id.manage_holidays -> manageHolidays()
+                R.id.add_birthdays -> tryAddBirthdays()
+                R.id.add_anniversaries -> tryAddAnniversaries()
+                R.id.more_apps_from_us -> launchMoreAppsFromUsIntent()
+                R.id.settings -> launchSettings()
+                R.id.about -> launchAbout()
+                else -> return@setOnMenuItemClickListener false
+            }
+            return@setOnMenuItemClickListener true
+        }
+    }
+
+    override fun onBackPressedCompat(): Boolean {
+        return if (binding.mainMenu.isSearchOpen) {
+            closeSearch()
+            true
+        } else {
+            binding.swipeRefreshLayout.isRefreshing = false
+            checkSwipeRefreshAvailability()
+            when {
+                binding.fabExtendedOverlay.isVisible() -> {
+                    hideExtendedFab()
+                    true
+                }
+
+                supportFragmentManager.backStackEntryCount > 0 -> {
+                    removeTopFragment()
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        checkIsOpenIntent()
+        checkIsViewIntent()
+    }
+
+    private fun storeStateVariables() {
+        mStoredTextColor = getProperTextColor()
+        mStoredPrimaryColor = getProperPrimaryColor()
+        mStoredBackgroundColor = getProperBackgroundColor()
+        config.apply {
+            mStoredFirstDayOfWeek = firstDayOfWeek
+            mStoredUse24HourFormat = use24HourFormat
+            mStoredDimPastEvents = dimPastEvents
+            mStoredDimCompletedTasks = dimCompletedTasks
+            mStoredHighlightWeekends = highlightWeekends
+            mStoredHighlightWeekendsColor = highlightWeekendsColor
+            mStoredMidnightSpan = showMidnightSpanningEventsAtTop
+            mStoredStartWeekWithCurrentDay = startWeekWithCurrentDay
+        }
+        mStoredDayCode = Formatter.getTodayCode()
+    }
+
+    private fun setupQuickFilter() {
+        eventsHelper.getCalendars(this, false) {
+            val quickFilterCalendars = config.quickFilterCalendars
+            binding.quickCalendarFilter.adapter =
+                QuickFilterCalendarAdapter(this, it, quickFilterCalendars) {
+                    if (config.displayCalendars.isEmpty() && !config.wasFilteredOutWarningShown) {
+                        toast(R.string.everything_filtered_out, Toast.LENGTH_LONG)
+                        config.wasFilteredOutWarningShown = true
+                    }
+
+                    refreshViewPager()
+                    updateWidgets()
+                }
+        }
+    }
+
+    private fun closeSearch() {
+        binding.mainMenu.closeSearch()
+        minFetchedSearchTS = 0L
+        maxFetchedSearchTS = 0L
+        searchResultEvents.clear()
+        bottomItemAtRefresh = null
+    }
+
+    private fun checkCalDAVUpdateListener() {
+        if (isNougatPlus()) {
+            val updateListener = CalDAVUpdateListener()
+            if (config.caldavSync) {
+                if (!updateListener.isScheduled(applicationContext)) {
+                    updateListener.scheduleJob(applicationContext)
+                }
+            } else {
+                updateListener.cancelJob(applicationContext)
+            }
+        }
+    }
+
+    private fun stopCalDAVUpdateListener() {
+        if (isNougatPlus()) {
+            if (!config.caldavSync) {
+                val updateListener = CalDAVUpdateListener()
+                updateListener.cancelJob(applicationContext)
+            }
+        }
+    }
+
+    @SuppressLint("NewApi")
+    private fun checkShortcuts() {
+        val appIconColor = config.appIconColor
+        if (isNougatMR1Plus() && config.lastHandledShortcutColor != appIconColor) {
+            val newEvent = getNewEventShortcut(appIconColor)
+            val shortcuts = arrayListOf(newEvent)
+
+            if (config.allowCreatingTasks) {
+                shortcuts.add(getNewTaskShortcut(appIconColor))
+            }
+
+            try {
+                shortcutManager.dynamicShortcuts = shortcuts
+                config.lastHandledShortcutColor = appIconColor
+            } catch (ignored: Exception) {
+            }
+        }
+    }
+
+    @SuppressLint("NewApi")
+    private fun getNewEventShortcut(appIconColor: Int): ShortcutInfo {
+        val newEvent = getString(R.string.new_event)
+        val newEventDrawable = resources.getDrawable(R.drawable.shortcut_event, theme)
+        (newEventDrawable as LayerDrawable).findDrawableByLayerId(R.id.shortcut_event_background)
+            .applyColorFilter(appIconColor)
+        val newEventBitmap = newEventDrawable.convertToBitmap()
+
+        val newEventIntent = Intent(this, SplashActivity::class.java)
+        newEventIntent.action = SHORTCUT_NEW_EVENT
+        return ShortcutInfo.Builder(this, "new_event")
+            .setShortLabel(newEvent)
+            .setLongLabel(newEvent)
+            .setIcon(Icon.createWithBitmap(newEventBitmap))
+            .setIntent(newEventIntent)
+            .build()
+    }
+
+    @SuppressLint("NewApi")
+    private fun getNewTaskShortcut(appIconColor: Int): ShortcutInfo {
+        val newTask = getString(R.string.new_task)
+        val newTaskDrawable = resources.getDrawable(R.drawable.shortcut_task, theme)
+        (newTaskDrawable as LayerDrawable).findDrawableByLayerId(R.id.shortcut_task_background)
+            .applyColorFilter(appIconColor)
+        val newTaskBitmap = newTaskDrawable.convertToBitmap()
+        val newTaskIntent = Intent(this, SplashActivity::class.java)
+        newTaskIntent.action = SHORTCUT_NEW_TASK
+        return ShortcutInfo.Builder(this, "new_task")
+            .setShortLabel(newTask)
+            .setLongLabel(newTask)
+            .setIcon(Icon.createWithBitmap(newTaskBitmap))
+            .setIntent(newTaskIntent)
+            .build()
+    }
+
+    private fun checkIsOpenIntent(): Boolean {
+        val dayCodeToOpen = intent.getStringExtra(DAY_CODE) ?: ""
+        val viewToOpen = intent.getIntExtra(VIEW_TO_OPEN, DAILY_VIEW)
+        intent.removeExtra(VIEW_TO_OPEN)
+        intent.removeExtra(DAY_CODE)
+        if (dayCodeToOpen.isNotEmpty()) {
+            binding.calendarFab.beVisible()
+            if (viewToOpen != LAST_VIEW) {
+                config.storedView = viewToOpen
+            }
+            updateViewPager(dayCodeToOpen)
+            return true
+        }
+
+        val eventIdToOpen = intent.getLongExtra(EVENT_ID, 0L)
+        val eventOccurrenceToOpen = intent.getLongExtra(EVENT_OCCURRENCE_TS, 0L)
+        val isTask = intent.getBooleanExtra(IS_TASK, false)
+        intent.removeExtra(EVENT_ID)
+        intent.removeExtra(EVENT_OCCURRENCE_TS)
+        intent.removeExtra(IS_TASK)
+        if (eventIdToOpen != 0L && eventOccurrenceToOpen != 0L) {
+            hideKeyboard()
+            Intent(this, getActivityToOpen(isTask)).apply {
+                putExtra(EVENT_ID, eventIdToOpen)
+                putExtra(EVENT_OCCURRENCE_TS, eventOccurrenceToOpen)
+                startActivity(this)
+            }
+        }
+
+        return false
+    }
+
+    private fun checkIsViewIntent() {
+        if (intent?.action == Intent.ACTION_VIEW && intent.data != null) {
+            val uri = intent.data
+            if (
+                uri?.authority?.equals("com.android.calendar") == true
+                || uri?.authority?.substringAfter("@") == "com.android.calendar"
+            ) {
+                if (uri.path!!.startsWith("/events")) {
+                    ensureBackgroundThread {
+                        // intents like content://com.android.calendar/events/1756
+                        val eventId = uri.lastPathSegment
+                        val id = eventsDB.getEventIdWithLastImportId("%-$eventId")
+                        if (id != null) {
+                            hideKeyboard()
+                            Intent(this, EventActivity::class.java).apply {
+                                putExtra(EVENT_ID, id)
+                                startActivity(this)
+                            }
+                        } else {
+                            toast(R.string.caldav_event_not_found, Toast.LENGTH_LONG)
+                        }
+                    }
+                } else if (
+                    uri.path!!.startsWith("/time")
+                    || intent?.extras?.getBoolean("DETAIL_VIEW", false) == true
+                ) {
+                    // clicking date on a third party widget: content://com.android.calendar/time/1507309245683
+                    // or content://0@com.android.calendar/time/1584958526435
+                    val timestamp = uri.pathSegments.last()
+                    if (timestamp.areDigitsOnly()) {
+                        openDayAt(timestamp.toLong())
+                        return
+                    }
+                }
+            } else {
+                tryImportEventsFromFile(uri!!) {
+                    if (it) {
+                        runOnUiThread {
+                            updateViewPager()
+                            setupQuickFilter()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun showViewDialog() {
+        val items = arrayListOf(
+            RadioItem(DAILY_VIEW, getString(R.string.daily_view)),
+            RadioItem(WEEKLY_VIEW, getString(R.string.weekly_view)),
+            RadioItem(MONTHLY_VIEW, getString(R.string.monthly_view)),
+            RadioItem(MONTHLY_DAILY_VIEW, getString(R.string.monthly_daily_view)),
+            RadioItem(YEARLY_VIEW, getString(R.string.yearly_view)),
+            RadioItem(EVENTS_LIST_VIEW, getString(R.string.simple_event_list))
+        )
+
+        RadioGroupDialog(activity = this, items = items, checkedItemId = config.storedView) {
+            resetActionBarTitle()
+            closeSearch()
+            updateView(it as Int)
+            shouldGoToTodayBeVisible = false
+            refreshMenuItems()
+        }
+    }
+
+    private fun goToToday() {
+        getCurrentFragment()?.goToToday()
+    }
+
+    fun showGoToDateDialog() {
+        getCurrentFragment()?.showGoToDateDialog()
+    }
+
+    private fun printView() {
+        getCurrentFragment()?.printView()
+    }
+
+    private fun resetActionBarTitle() {
+        binding.mainMenu.updateHintText(getString(org.fossify.commons.R.string.search))
+    }
+
+    private fun showFilterDialog() {
+        SelectCalendarsDialog(activity = this, selectedCalendars = config.displayCalendars) {
+            if (config.displayCalendars != it) {
+                config.displayCalendars = it
+
+                refreshViewPager()
+                setupQuickFilter()
+                updateWidgets()
+            }
+        }
+    }
+
+    fun toggleGoToTodayVisibility(beVisible: Boolean) {
+        shouldGoToTodayBeVisible = beVisible
+        if (goToTodayButton?.isVisible != beVisible) {
+            refreshMenuItems()
+        }
+    }
+
+    private fun updateCalDAVEvents() {
+        ensureBackgroundThread {
+            calDAVHelper.refreshCalendars(showToasts = false, scheduleNextSync = true) {
+                refreshViewPager()
+            }
+        }
+    }
+
+    private fun refreshCalDAVCalendars(showRefreshToast: Boolean) {
+        showCalDAVRefreshToast = showRefreshToast
+        if (showRefreshToast) {
+            toast(R.string.refreshing)
+        }
+        updateCalDAVEvents()
+        syncCalDAVCalendars {
+            calDAVHelper.refreshCalendars(showToasts = true, scheduleNextSync = true) {
+                calDAVChanged()
+            }
+        }
+    }
+
+    private fun calDAVChanged() {
+        refreshViewPager()
+        if (showCalDAVRefreshToast) {
+            toast(R.string.refreshing_complete)
+        }
+        runOnUiThread {
+            binding.swipeRefreshLayout.isRefreshing = false
+        }
+    }
+
+    private fun manageHolidays() {
+        if (updatingHolidays) {
+            toast(org.fossify.commons.R.string.importing)
+            return
+        }
+        if (config.showHolidayManagementNotice) {
+            ConfirmationDialog(
+                activity = this,
+                messageId = R.string.holiday_management_notice,
+                positive = org.fossify.commons.R.string.ok,
+                negative = 0,
+                dialogTitle = getString(R.string.manage_holidays)
+            ) {
+                config.showHolidayManagementNotice = false
+                manageHolidays()
+            }
+            return
+        }
+        ensureBackgroundThread {
+            val countries = HolidayHelper(this).load().countries
+            runOnUiThread {
+                if (!isDestroyed && !isFinishing) {
+                    ManageHolidaysDialog(this, countries) { paths, reminders -> refreshHolidays(paths, reminders) }
+                }
+            }
+        }
+    }
+
+    private fun refreshHolidays(paths: Set<String>? = null, reminders: ArrayList<Int> = config.holidayReminders) {
+        updatingHolidays = true
+        ensureBackgroundThread {
+            val helper = HolidayHelper(this)
+            val result = if (paths == null) helper.refreshIfNeeded() else helper.updateSelection(paths, reminders)
+            runOnUiThread {
+                updatingHolidays = false
+                if (isDestroyed || isFinishing) return@runOnUiThread
+                if (paths != null) {
+                    toast(
+                        if (result == ImportResult.IMPORT_FAIL) R.string.importing_holidays_failed
+                        else R.string.holidays_updated
+                    )
+                }
+                if (result == ImportResult.IMPORT_OK) {
+                    updateViewPager()
+                    setupQuickFilter()
+                }
+            }
+        }
+    }
+
+    private fun tryAddBirthdays() {
+        handlePermission(PERMISSION_READ_CONTACTS) {
+            if (it) {
+                SetRemindersDialog(this, BIRTHDAY_EVENT) {
+                    val reminders = it
+                    val privateCursor = getMyContactsCursor(false, false)
+
+                    ensureBackgroundThread {
+                        val privateContacts =
+                            MyContactsContentProvider.getSimpleContacts(this, privateCursor)
+                        addPrivateEvents(
+                            birthdays = true,
+                            contacts = privateContacts,
+                            reminders = reminders
+                        ) { eventsFound, eventsAdded ->
+                            addContactEvents(
+                                birthdays = true,
+                                reminders = reminders,
+                                initEventsFound = eventsFound,
+                                initEventsAdded = eventsAdded
+                            ) {
+                                when {
+                                    it > 0 -> {
+                                        toast(R.string.birthdays_added)
+                                        updateViewPager()
+                                        setupQuickFilter()
+                                    }
+
+                                    it == -1 -> toast(R.string.no_new_birthdays)
+                                    else -> toast(R.string.no_birthdays)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                toast(org.fossify.commons.R.string.no_contacts_permission)
+            }
+        }
+    }
+
+    private fun tryAddAnniversaries() {
+        handlePermission(PERMISSION_READ_CONTACTS) {
+            if (it) {
+                SetRemindersDialog(this, ANNIVERSARY_EVENT) {
+                    val reminders = it
+                    val privateCursor = getMyContactsCursor(false, false)
+
+                    ensureBackgroundThread {
+                        val privateContacts =
+                            MyContactsContentProvider.getSimpleContacts(this, privateCursor)
+                        addPrivateEvents(
+                            birthdays = false,
+                            contacts = privateContacts,
+                            reminders = reminders
+                        ) { eventsFound, eventsAdded ->
+                            addContactEvents(
+                                birthdays = false,
+                                reminders = reminders,
+                                initEventsFound = eventsFound,
+                                initEventsAdded = eventsAdded
+                            ) {
+                                when {
+                                    it > 0 -> {
+                                        toast(R.string.anniversaries_added)
+                                        updateViewPager()
+                                        setupQuickFilter()
+                                    }
+
+                                    it == -1 -> toast(R.string.no_new_anniversaries)
+                                    else -> toast(R.string.no_anniversaries)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                toast(org.fossify.commons.R.string.no_contacts_permission)
+            }
+        }
+    }
+
+    private fun addBirthdaysAnniversariesAtStart() {
+        if (
+            (!config.addBirthdaysAutomatically && !config.addAnniversariesAutomatically)
+            || !hasPermission(PERMISSION_READ_CONTACTS)
+        ) {
+            return
+        }
+
+        val privateCursor = getMyContactsCursor(false, false)
+
+        ensureBackgroundThread {
+            val privateContacts = MyContactsContentProvider.getSimpleContacts(this, privateCursor)
+            if (config.addBirthdaysAutomatically) {
+                addPrivateEvents(
+                    birthdays = true,
+                    contacts = privateContacts,
+                    reminders = config.birthdayReminders
+                ) { eventsFound, eventsAdded ->
+                    addContactEvents(
+                        birthdays = true,
+                        reminders = config.birthdayReminders,
+                        initEventsFound = eventsFound,
+                        initEventsAdded = eventsAdded
+                    ) {
+                        if (it > 0) {
+                            toast(R.string.birthdays_added)
+                            updateViewPager()
+                            setupQuickFilter()
+                        }
+                    }
+                }
+            }
+
+            if (config.addAnniversariesAutomatically) {
+                addPrivateEvents(
+                    birthdays = false,
+                    contacts = privateContacts,
+                    reminders = config.anniversaryReminders
+                ) { eventsFound, eventsAdded ->
+                    addContactEvents(
+                        birthdays = false,
+                        reminders = config.anniversaryReminders,
+                        initEventsFound = eventsFound,
+                        initEventsAdded = eventsAdded
+                    ) {
+                        if (it > 0) {
+                            toast(R.string.anniversaries_added)
+                            updateViewPager()
+                            setupQuickFilter()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun addContactEvents(
+        birthdays: Boolean,
+        reminders: ArrayList<Int>,
+        initEventsFound: Int,
+        initEventsAdded: Int,
+        callback: (Int) -> Unit
+    ) {
+        var eventsFound = initEventsFound
+        var eventsAdded = initEventsAdded
+        val uri = Data.CONTENT_URI
+        val projection = arrayOf(
+            Contacts.DISPLAY_NAME,
+            CommonDataKinds.Event.CONTACT_ID,
+            CommonDataKinds.Event.CONTACT_LAST_UPDATED_TIMESTAMP,
+            CommonDataKinds.Event.START_DATE
+        )
+
+        val selection = "${Data.MIMETYPE} = ? AND ${CommonDataKinds.Event.TYPE} = ?"
+        val type =
+            if (birthdays) CommonDataKinds.Event.TYPE_BIRTHDAY else CommonDataKinds.Event.TYPE_ANNIVERSARY
+        val selectionArgs = arrayOf(CommonDataKinds.Event.CONTENT_ITEM_TYPE, type.toString())
+
+        val dateFormats = getDateFormats()
+        val yearDateFormats = getDateFormatsWithYear()
+        val existingEvents = if (birthdays) eventsDB.getBirthdays() else eventsDB.getAnniversaries()
+        val importIDs = HashMap<String, Long>()
+        existingEvents.forEach {
+            importIDs[it.importId] = it.startTS
+        }
+
+        val calendarId =
+            if (birthdays) eventsHelper.getLocalBirthdaysCalendarId() else eventsHelper.getAnniversariesCalendarId()
+        val source = if (birthdays) SOURCE_CONTACT_BIRTHDAY else SOURCE_CONTACT_ANNIVERSARY
+
+        queryCursor(
+            uri = uri,
+            projection = projection,
+            selection = selection,
+            selectionArgs = selectionArgs,
+            showErrors = true
+        ) { cursor ->
+            val contactId = cursor.getIntValue(CommonDataKinds.Event.CONTACT_ID).toString()
+            val name = cursor.getStringValue(Contacts.DISPLAY_NAME)
+            val startDate = cursor.getStringValue(CommonDataKinds.Event.START_DATE)
+
+            for (format in dateFormats) {
+                try {
+                    val formatter = SimpleDateFormat(format, Locale.getDefault())
+                    val date = formatter.parse(startDate)
+                    val flags = if (format in yearDateFormats) {
+                        FLAG_ALL_DAY
+                    } else {
+                        FLAG_ALL_DAY or FLAG_MISSING_YEAR
+                    }
+
+                    val timestamp = date.time / 1000L
+                    val lastUpdated =
+                        cursor.getLongValue(CommonDataKinds.Event.CONTACT_LAST_UPDATED_TIMESTAMP)
+                    val event = Event(
+                        id = null,
+                        startTS = timestamp,
+                        endTS = timestamp,
+                        title = name,
+                        reminder1Minutes = reminders[0],
+                        reminder2Minutes = reminders[1],
+                        reminder3Minutes = reminders[2],
+                        importId = contactId,
+                        timeZone = DateTimeZone.getDefault().id,
+                        flags = flags,
+                        repeatInterval = YEAR,
+                        repeatRule = REPEAT_SAME_DAY,
+                        calendarId = calendarId,
+                        source = source,
+                        lastUpdated = lastUpdated
+                    )
+
+                    val importIDsToDelete = ArrayList<String>()
+                    for ((key, value) in importIDs) {
+                        if (key == contactId && value != timestamp) {
+                            val deleted = eventsDB.deleteBirthdayAnniversary(source, key)
+                            if (deleted == 1) {
+                                importIDsToDelete.add(key)
+                            }
+                        }
+                    }
+
+                    importIDsToDelete.forEach {
+                        importIDs.remove(it)
+                    }
+
+                    eventsFound++
+                    if (!importIDs.containsKey(contactId)) {
+                        // avoid adding duplicate birthdays/anniversaries
+                        if (existingEvents.none { it.title == event.title && it.startTS == event.startTS }) {
+                            eventsHelper.insertEvent(event, false, false) {
+                                eventsAdded++
+                            }
+                        }
+                    }
+                    break
+                } catch (e: Exception) {
+                }
+            }
+        }
+
+        runOnUiThread {
+            callback(if (eventsAdded == 0 && eventsFound > 0) -1 else eventsAdded)
+        }
+    }
+
+    private fun addPrivateEvents(
+        birthdays: Boolean,
+        contacts: ArrayList<SimpleContact>,
+        reminders: ArrayList<Int>,
+        callback: (eventsFound: Int, eventsAdded: Int) -> Unit
+    ) {
+        var eventsAdded = 0
+        var eventsFound = 0
+        if (contacts.isEmpty()) {
+            callback(0, 0)
+            return
+        }
+
+        try {
+            val calendarId =
+                if (birthdays) eventsHelper.getLocalBirthdaysCalendarId() else eventsHelper.getAnniversariesCalendarId()
+            val source = if (birthdays) SOURCE_CONTACT_BIRTHDAY else SOURCE_CONTACT_ANNIVERSARY
+
+            val existingEvents =
+                if (birthdays) eventsDB.getBirthdays() else eventsDB.getAnniversaries()
+            val importIDs = HashMap<String, Long>()
+            existingEvents.forEach {
+                importIDs[it.importId] = it.startTS
+            }
+
+            contacts.forEach { contact ->
+                val events = if (birthdays) contact.birthdays else contact.anniversaries
+                events.forEach { birthdayAnniversary ->
+                    var missingYear = false
+                    // private contacts are created in Simple Contacts Pro, so we can guarantee that they exist only in these 2 formats
+                    val format = if (birthdayAnniversary.startsWith("--")) {
+                        missingYear = true
+                        "--MM-dd"
+                    } else {
+                        "yyyy-MM-dd"
+                    }
+
+                    val flags = if (missingYear) {
+                        FLAG_ALL_DAY or FLAG_MISSING_YEAR
+                    } else {
+                        FLAG_ALL_DAY
+                    }
+
+                    val formatter = SimpleDateFormat(format, Locale.getDefault())
+                    val date = formatter.parse(birthdayAnniversary)
+
+                    val timestamp = date.time / 1000L
+                    val lastUpdated = System.currentTimeMillis()
+                    val event = Event(
+                        id = null,
+                        startTS = timestamp,
+                        endTS = timestamp,
+                        title = contact.name,
+                        reminder1Minutes = reminders[0],
+                        reminder2Minutes = reminders[1],
+                        reminder3Minutes = reminders[2],
+                        importId = contact.contactId.toString(),
+                        timeZone = DateTimeZone.getDefault().id,
+                        flags = flags,
+                        repeatInterval = YEAR,
+                        repeatRule = REPEAT_SAME_DAY,
+                        calendarId = calendarId,
+                        source = source,
+                        lastUpdated = lastUpdated
+                    )
+
+                    val importIDsToDelete = ArrayList<String>()
+                    for ((key, value) in importIDs) {
+                        if (key == contact.contactId.toString() && value != timestamp) {
+                            val deleted = eventsDB.deleteBirthdayAnniversary(source, key)
+                            if (deleted == 1) {
+                                importIDsToDelete.add(key)
+                            }
+                        }
+                    }
+
+                    importIDsToDelete.forEach {
+                        importIDs.remove(it)
+                    }
+
+                    eventsFound++
+                    if (!importIDs.containsKey(contact.contactId.toString())) {
+                        eventsHelper.insertEvent(event, false, false) {
+                            eventsAdded++
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            showErrorToast(e)
+        }
+
+        callback(eventsFound, eventsAdded)
+    }
+
+    private fun updateView(view: Int) {
+        binding.calendarFab.beVisibleIf(view != YEARLY_VIEW && view != WEEKLY_VIEW)
+        val dateCode = getDateCodeToDisplay(view)
+        config.storedView = view
+        checkSwipeRefreshAvailability()
+        updateViewPager(dateCode)
+        if (goToTodayButton?.isVisible == true) {
+            shouldGoToTodayBeVisible = false
+            refreshMenuItems()
+        }
+    }
+
+    private fun getDateCodeToDisplay(newView: Int): String? {
+        val fragment = getCurrentFragment() ?: return null
+        val currentView = fragment.viewType
+        if (newView == EVENTS_LIST_VIEW || currentView == EVENTS_LIST_VIEW) {
+            return null
+        }
+
+        val fragmentDate = fragment.getCurrentDate()
+        val viewOrder = arrayListOf(DAILY_VIEW, WEEKLY_VIEW, MONTHLY_VIEW, YEARLY_VIEW)
+        val currentViewIndex =
+            viewOrder.indexOf(if (currentView == MONTHLY_DAILY_VIEW) MONTHLY_VIEW else currentView)
+        val newViewIndex =
+            viewOrder.indexOf(if (newView == MONTHLY_DAILY_VIEW) MONTHLY_VIEW else newView)
+
+        return if (fragmentDate != null && currentViewIndex <= newViewIndex) {
+            getDateCodeFormatForView(newView, fragmentDate)
+        } else {
+            getDateCodeFormatForView(newView, DateTime())
+        }
+    }
+
+    private fun getDateCodeFormatForView(view: Int, date: DateTime): String {
+        return when (view) {
+            WEEKLY_VIEW -> getFirstDayOfWeek(date)
+            YEARLY_VIEW -> date.toString()
+            else -> Formatter.getDayCodeFromDateTime(date)
+        }
+    }
+
+    private fun updateViewPager(dayCode: String? = null) {
+        val fragment = getFragmentsHolder()
+        val bundle = Bundle()
+        val fixedDayCode = fixDayCode(dayCode)
+
+        when (config.storedView) {
+            DAILY_VIEW -> bundle.putString(DAY_CODE, fixedDayCode ?: Formatter.getTodayCode())
+            WEEKLY_VIEW -> bundle.putString(
+                WEEK_START_DATE_TIME,
+                fixedDayCode ?: getFirstDayOfWeek(DateTime())
+            )
+
+            MONTHLY_VIEW, MONTHLY_DAILY_VIEW -> bundle.putString(
+                DAY_CODE,
+                fixedDayCode ?: Formatter.getTodayCode()
+            )
+
+            YEARLY_VIEW -> bundle.putString(YEAR_TO_OPEN, fixedDayCode)
+        }
+
+        fragment.arguments = bundle
+        supportFragmentManager.popBackStack(null, FragmentManager.POP_BACK_STACK_INCLUSIVE)
+        supportFragmentManager.executePendingTransactions()
+        supportFragmentManager.beginTransaction().replace(R.id.fragments_holder, fragment).commitNow()
+        binding.mainMenu.toggleForceArrowBackIcon(false)
+    }
+
+    private fun fixDayCode(dayCode: String? = null): String? = when {
+        config.storedView == WEEKLY_VIEW && (dayCode?.length == DAYCODE_PATTERN.length) -> {
+            getFirstDayOfWeek(Formatter.getLocalDateTimeFromCode(dayCode))
+        }
+
+        config.storedView == YEARLY_VIEW && (dayCode?.length == DAYCODE_PATTERN.length) -> {
+            Formatter.getYearFromDayCode(dayCode)
+        }
+
+        else -> dayCode
+    }
+
+    private fun showExtendedFab() {
+        animateFabIcon(false)
+        binding.apply {
+            arrayOf(fabEventLabel, fabExtendedOverlay, fabTaskIcon, fabTaskLabel).forEach {
+                it.fadeIn()
+            }
+        }
+    }
+
+    private fun hideExtendedFab() {
+        animateFabIcon(true)
+        binding.apply {
+            arrayOf(fabEventLabel, fabExtendedOverlay, fabTaskIcon, fabTaskLabel).forEach {
+                it.fadeOut()
+            }
+        }
+    }
+
+    private fun animateFabIcon(showPlus: Boolean) {
+        val newDrawableId = if (showPlus) {
+            org.fossify.commons.R.drawable.ic_plus_vector
+        } else {
+            R.drawable.ic_today_vector
+        }
+        val newDrawable =
+            resources.getColoredDrawableWithColor(newDrawableId, getProperPrimaryColor())
+        binding.calendarFab.setImageDrawable(newDrawable)
+    }
+
+    private fun openNewEvent() {
+        hideKeyboard()
+        val lastFragment = getCurrentFragment() ?: return
+        val allowChangingDay =
+            lastFragment !is DayFragmentsHolder && lastFragment !is MonthDayFragmentsHolder
+        launchNewEventIntent(lastFragment.getNewEventDayCode(), allowChangingDay)
+    }
+
+    private fun openNewTask() {
+        hideKeyboard()
+        val lastFragment = getCurrentFragment() ?: return
+        val allowChangingDay =
+            lastFragment !is DayFragmentsHolder && lastFragment !is MonthDayFragmentsHolder
+        launchNewTaskIntent(lastFragment.getNewEventDayCode(), allowChangingDay)
+    }
+
+    fun openMonthFromYearly(dateTime: DateTime) {
+        if (getCurrentFragment() is MonthFragmentsHolder) {
+            return
+        }
+
+        val fragment = MonthFragmentsHolder()
+        val bundle = Bundle()
+        bundle.putString(DAY_CODE, Formatter.getDayCodeFromDateTime(dateTime))
+        fragment.arguments = bundle
+        supportFragmentManager
+            .beginTransaction()
+            .replace(R.id.fragments_holder, fragment)
+            .addToBackStack(null)
+            .commit()
+        supportFragmentManager.executePendingTransactions()
+        resetActionBarTitle()
+        binding.calendarFab.beVisible()
+        showBackNavigationArrow()
+    }
+
+    fun openDayFromMonthly(dateTime: DateTime) {
+        if (getCurrentFragment() is DayFragmentsHolder) {
+            return
+        }
+
+        val fragment = DayFragmentsHolder()
+        val bundle = Bundle()
+        bundle.putString(DAY_CODE, Formatter.getDayCodeFromDateTime(dateTime))
+        fragment.arguments = bundle
+        try {
+            supportFragmentManager.beginTransaction().replace(R.id.fragments_holder, fragment)
+                .addToBackStack(null)
+                .commit()
+            supportFragmentManager.executePendingTransactions()
+            showBackNavigationArrow()
+        } catch (e: Exception) {
+        }
+    }
+
+    fun openDayFromWeekly(dateTime: DateTime) {
+        if (getCurrentFragment() is DayFragmentsHolder) {
+            return
+        }
+
+        val fragment = DayFragmentsHolder()
+        val bundle = Bundle()
+        bundle.putString(DAY_CODE, Formatter.getDayCodeFromDateTime(dateTime))
+        fragment.arguments = bundle
+        supportFragmentManager
+            .beginTransaction()
+            .replace(R.id.fragments_holder, fragment)
+            .addToBackStack(null)
+            .commit()
+        supportFragmentManager.executePendingTransactions()
+        resetActionBarTitle()
+        binding.calendarFab.beVisible()
+        showBackNavigationArrow()
+    }
+
+    private fun getFragmentsHolder() = when (config.storedView) {
+        DAILY_VIEW -> DayFragmentsHolder()
+        MONTHLY_VIEW -> MonthFragmentsHolder()
+        MONTHLY_DAILY_VIEW -> MonthDayFragmentsHolder()
+        YEARLY_VIEW -> YearFragmentsHolder()
+        EVENTS_LIST_VIEW -> EventListFragment()
+        else -> WeekFragmentsHolder()
+    }
+
+    private fun getCurrentFragment(): MyFragmentHolder? {
+        return supportFragmentManager.findFragmentById(R.id.fragments_holder) as MyFragmentHolder?
+    }
+
+    private fun removeTopFragment() {
+        supportFragmentManager.popBackStack()
+        supportFragmentManager.executePendingTransactions()
+
+        val currentFragment = getCurrentFragment()
+        toggleGoToTodayVisibility(currentFragment?.shouldGoToTodayBeVisible() == true)
+        currentFragment?.apply {
+            refreshEvents()
+        }
+
+        binding.calendarFab.beGoneIf(
+            supportFragmentManager.backStackEntryCount == 0 &&
+                    (config.storedView == YEARLY_VIEW || config.storedView == WEEKLY_VIEW)
+        )
+        if (supportFragmentManager.backStackEntryCount > 0) {
+            showBackNavigationArrow()
+        } else {
+            binding.mainMenu.toggleForceArrowBackIcon(false)
+        }
+    }
+
+    private fun showBackNavigationArrow() {
+        binding.mainMenu.toggleForceArrowBackIcon(true)
+        binding.mainMenu.onNavigateBackClickListener = {
+            onBackPressedCompat()
+        }
+    }
+
+    private fun refreshViewPager() {
+        runOnUiThread {
+            if (!isDestroyed) {
+                getCurrentFragment()?.refreshEvents()
+            }
+        }
+    }
+
+    private fun launchSettings() {
+        hideKeyboard()
+        startActivity(Intent(applicationContext, SettingsActivity::class.java))
+    }
+
+    private fun launchAbout() {
+        val licenses = LICENSE_JODA
+
+        val faqItems = arrayListOf(
+            FAQItem(
+                title = "${getString(R.string.faq_2_title)} ${getString(R.string.faq_2_title_extra)}",
+                text = R.string.faq_2_text
+            ),
+            FAQItem(R.string.faq_5_title, R.string.faq_5_text),
+            FAQItem(R.string.faq_3_title, R.string.faq_3_text),
+            FAQItem(R.string.faq_6_title, R.string.faq_6_text),
+            FAQItem(R.string.faq_1_title, R.string.faq_1_text),
+            FAQItem(
+                title = org.fossify.commons.R.string.faq_1_title_commons,
+                text = org.fossify.commons.R.string.faq_1_text_commons
+            ),
+            FAQItem(
+                title = org.fossify.commons.R.string.faq_4_title_commons,
+                text = org.fossify.commons.R.string.faq_4_text_commons
+            ),
+            FAQItem(R.string.faq_4_title, R.string.faq_4_text)
+        )
+
+        if (resources.getBoolean(org.fossify.commons.R.bool.is_google_play_build)) {
+            faqItems.add(
+                FAQItem(
+                    title = org.fossify.commons.R.string.faq_2_title_commons,
+                    text = org.fossify.commons.R.string.faq_2_text_commons
+                )
+            )
+            faqItems.add(
+                FAQItem(
+                    title = org.fossify.commons.R.string.faq_6_title_commons,
+                    text = org.fossify.commons.R.string.faq_6_text_commons
+                )
+            )
+            faqItems.add(
+                FAQItem(
+                    title = org.fossify.commons.R.string.faq_7_title_commons,
+                    text = org.fossify.commons.R.string.faq_7_text_commons
+                )
+            )
+        }
+
+        startAboutActivity(
+            appNameId = R.string.app_name,
+            licenseMask = licenses,
+            versionName = org.fossify.calendar.BuildConfig.VERSION_NAME,
+            faqItems = faqItems,
+            showFAQBeforeMail = true
+        )
+    }
+
+    private fun searchQueryChanged(text: String) {
+        mLatestSearchQuery = text
+
+        if (text.isNotEmpty() && binding.searchHolder.isGone()) {
+            binding.searchHolder.fadeIn()
+        } else if (text.isEmpty()) {
+            binding.searchHolder.fadeOut()
+            binding.searchResultsList.adapter = null
+        }
+
+        val placeholderTextId = if (config.displayCalendars.isEmpty()) {
+            R.string.everything_filtered_out
+        } else {
+            org.fossify.commons.R.string.no_items_found
+        }
+
+        binding.searchPlaceholder.setText(placeholderTextId)
+        binding.searchPlaceholder2.beVisibleIf(text.length == 1)
+        if (text.length >= 2) {
+            if (binding.searchResultsList.adapter == null) {
+                minFetchedSearchTS = DateTime().minusYears(2).seconds()
+                maxFetchedSearchTS = DateTime().plusYears(2).seconds()
+            }
+
+            eventsHelper.getEvents(
+                fromTS = minFetchedSearchTS,
+                toTS = maxFetchedSearchTS,
+                searchQuery = text
+            ) { events ->
+                if (text == mLatestSearchQuery) {
+                    // if we have less than MIN_EVENTS_THRESHOLD events, search again by extending the time span
+                    showSearchResultEvents(events, INITIAL_EVENTS)
+
+                    if (events.size < MIN_EVENTS_TRESHOLD) {
+                        minFetchedSearchTS = 0L
+                        maxFetchedSearchTS = MAX_SEARCH_YEAR
+
+                        eventsHelper.getEvents(
+                            fromTS = minFetchedSearchTS,
+                            toTS = maxFetchedSearchTS,
+                            searchQuery = text
+                        ) { events ->
+                            events.forEach { event ->
+                                try {
+                                    if (searchResultEvents.firstOrNull { it.id == event.id && it.startTS == event.startTS } == null) {
+                                        searchResultEvents.add(0, event)
+                                    }
+                                } catch (ignored: ConcurrentModificationException) {
+                                }
+                            }
+
+                            showSearchResultEvents(searchResultEvents, INITIAL_EVENTS)
+                        }
+                    }
+                }
+            }
+        } else if (text.length == 1) {
+            binding.searchPlaceholder.beVisible()
+            binding.searchResultsList.beGone()
+        }
+    }
+
+    private fun showSearchResultEvents(events: ArrayList<Event>, updateStatus: Int) {
+        val currentSearchQuery = binding.mainMenu.getCurrentQuery()
+        val filtered = try {
+            events.filter {
+                it.title.contains(currentSearchQuery, true)
+                        || it.location.contains(currentSearchQuery, true)
+                        || it.description.contains(currentSearchQuery, true)
+            }
+        } catch (e: ConcurrentModificationException) {
+            return
+        }
+
+        searchResultEvents = filtered.toMutableList() as ArrayList<Event>
+        runOnUiThread {
+            binding.searchResultsList.beVisibleIf(filtered.isNotEmpty())
+            binding.searchPlaceholder.beVisibleIf(filtered.isEmpty())
+            val listItems = getEventListItems(filtered)
+            val currAdapter = binding.searchResultsList.adapter
+            if (currAdapter == null) {
+                val eventsAdapter =
+                    EventListAdapter(
+                        activity = this,
+                        listItems = listItems,
+                        allowLongClick = true,
+                        listener = this,
+                        recyclerView = binding.searchResultsList
+                    ) {
+                        hideKeyboard()
+                        if (it is ListEvent) {
+                            Intent(applicationContext, getActivityToOpen(it.isTask)).apply {
+                                putExtra(EVENT_ID, it.id)
+                                putExtra(EVENT_OCCURRENCE_TS, it.startTS)
+                                startActivity(this)
+                            }
+                        }
+                    }
+
+                binding.searchResultsList.adapter = eventsAdapter
+
+                binding.searchResultsList.endlessScrollListener =
+                    object : MyRecyclerView.EndlessScrollListener {
+                        override fun updateTop() {
+                            fetchPreviousPeriod()
+                        }
+
+                        override fun updateBottom() {
+                            fetchNextPeriod()
+                        }
+                    }
+            } else {
+                (currAdapter as EventListAdapter).updateListItems(listItems)
+                if (updateStatus == UPDATE_TOP) {
+                    val item = listItems.indexOfFirst { it == bottomItemAtRefresh }
+                    if (item != -1) {
+                        binding.searchResultsList.scrollToPosition(item)
+                    }
+                } else if (updateStatus == UPDATE_BOTTOM) {
+                    binding.searchResultsList.smoothScrollBy(
+                        0,
+                        resources.getDimension(R.dimen.endless_scroll_move_height).toInt()
+                    )
+                } else {
+                    val firstNonPastSectionIndex =
+                        listItems.indexOfFirst { it is ListSectionDay && !it.isPastSection }
+                    if (firstNonPastSectionIndex != -1) {
+                        binding.searchResultsList.scrollToPosition(firstNonPastSectionIndex)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun fetchPreviousPeriod() {
+        if (minFetchedSearchTS == 0L) {
+            return
+        }
+
+        val lastPosition =
+            (binding.searchResultsList.layoutManager as MyLinearLayoutManager).findLastVisibleItemPosition()
+        bottomItemAtRefresh =
+            (binding.searchResultsList.adapter as EventListAdapter).listItems[lastPosition]
+
+        val oldMinFetchedTS = minFetchedSearchTS - 1
+        minFetchedSearchTS -= FETCH_INTERVAL
+        eventsHelper.getEvents(
+            fromTS = minFetchedSearchTS,
+            toTS = oldMinFetchedTS,
+            searchQuery = mLatestSearchQuery
+        ) { events ->
+            events.forEach { event ->
+                try {
+                    if (searchResultEvents.firstOrNull { it.id == event.id && it.startTS == event.startTS } == null) {
+                        searchResultEvents.add(0, event)
+                    }
+                } catch (ignored: ConcurrentModificationException) {
+                }
+            }
+
+            showSearchResultEvents(searchResultEvents, UPDATE_TOP)
+        }
+    }
+
+    private fun fetchNextPeriod() {
+        if (maxFetchedSearchTS == MAX_SEARCH_YEAR) {
+            return
+        }
+
+        val oldMaxFetchedTS = maxFetchedSearchTS + 1
+        maxFetchedSearchTS += FETCH_INTERVAL
+        eventsHelper.getEvents(
+            fromTS = oldMaxFetchedTS,
+            toTS = maxFetchedSearchTS,
+            searchQuery = mLatestSearchQuery
+        ) { events ->
+            events.forEach { event ->
+                try {
+                    if (searchResultEvents.firstOrNull { it.id == event.id && it.startTS == event.startTS } == null) {
+                        searchResultEvents.add(0, event)
+                    }
+                } catch (ignored: ConcurrentModificationException) {
+                }
+            }
+
+            showSearchResultEvents(searchResultEvents, UPDATE_BOTTOM)
+        }
+    }
+
+    private fun checkSwipeRefreshAvailability() {
+        binding.swipeRefreshLayout.isEnabled =
+            config.caldavSync && config.pullToRefresh && config.storedView != WEEKLY_VIEW
+        if (!binding.swipeRefreshLayout.isEnabled) {
+            binding.swipeRefreshLayout.isRefreshing = false
+        }
+    }
+
+    override fun refreshItems() {
+        refreshViewPager()
+    }
+
+    private fun openDayAt(timestamp: Long) {
+        val dayCode = Formatter.getDayCodeFromTS(timestamp / 1000L)
+        binding.calendarFab.beVisible()
+        config.storedView = DAILY_VIEW
+        updateViewPager(dayCode)
+    }
+
+    private fun checkWhatsNewDialog() {
+        arrayListOf<Release>().apply {
+            checkWhatsNew(this, org.fossify.calendar.BuildConfig.VERSION_CODE)
+        }
+    }
+}
