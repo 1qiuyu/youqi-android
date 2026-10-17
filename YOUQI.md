@@ -108,7 +108,7 @@ ANDROID_SERIAL=你的模拟器序号 ./gradlew :app:connectedFossDebugAndroidTes
 
 ## GitHub 源码托管
 
-私有仓库：`1qiuyu/youqi-android`。本仓库只保存源代码，编译和测试在本机执行。
+公开仓库：`1qiuyu/youqi-android`。本仓库只保存源代码，编译和测试在本机执行。
 GitHub Actions 关闭，不保留工作流或定时自动化；不使用 Git LFS、云构建、云部署或付费附加服务。
 提交内容排除 API Key、签名私钥、手机日程数据库、机器路径配置、构建输出和缓存。
 
@@ -132,3 +132,7 @@ GitHub Actions 关闭，不保留工作流或定时自动化；不使用 Git LFS
 本版新增11项语音浏览器交互检查，原有12项日程交互回归通过；独立模拟器实际执行13项原生测试，0跳过，覆盖multipart上传、错误脱敏、音频读取、Key隔离和原有API/显示存储。
 
 实体iQOO 15已安装0.3.0，通过一次短录音、切后台停止并保留音频、系统文件选择器及取消、清除缓存检查。原日程与文本API配置摘要升级前后相同。测试音频已删除，未上传到外部服务；尚未配置真实语音API，真实转写效果待配置后验证。
+
+## 下载源码
+
+仓库公开，访问 [GitHub 项目页](https://github.com/1qiuyu/youqi-android)，点击 **Code → Download ZIP** 即可下载源码，也可使用 Git 克隆。源码包含接口调用实现和测试示例，不包含开发者手机中的 API Key、真实日程、录音、背景图或签名私钥。使用者需要自行构建，并在自己的手机上配置 API。
