@@ -2,7 +2,7 @@
 
 独立维护的个人安卓日程与待办应用。源码、反馈及版本管理统一在 [1qiuyu/youqi-android](https://github.com/1qiuyu/youqi-android)。
 
-本机编译，不跟随原项目的发布或更新流程；GitHub Actions 保持关闭。
+源码和版本发布统一在本仓库维护；GitHub Releases 提供 APK，应用内可从「设置 → 检查更新」下载并打开系统安装程序。
 
 许可证为 GNU GPL v3，原有代码的来源和版权说明见 [NOTICE.md](NOTICE.md)。
 
@@ -118,10 +118,11 @@ ANDROID_SERIAL=你的模拟器序号 ./gradlew :app:connectedFossDebugAndroidTes
 - 12项新增浏览器检查、12项连续日历回归通过；2项独立模拟器测试验证显示偏好保存/备份和跨周颜色一致。
 
 
-## GitHub 源码托管
+## GitHub 源码与发布
 
-公开仓库：`1qiuyu/youqi-android`。本仓库只保存源代码，编译和测试在本机执行。
-GitHub Actions 关闭，不保留工作流或定时自动化；不使用 Git LFS、云构建、云部署或付费附加服务。
+公开仓库：`1qiuyu/youqi-android`。推送 `v*` 标签会触发 `.github/workflows/release.yml`，构建并发布 Foss Debug APK；也可以从 Actions 页面手动运行。
+为保证手机能够覆盖安装，工作流使用仓库 Secret `YUNDUO_DEBUG_KEYSTORE_BASE64` 恢复稳定的调试签名。没有该 Secret 时仍可构建，但生成的 APK 不能覆盖另一台构建机的安装包。
+应用内更新只访问 GitHub API 和 GitHub Release APK，不会上传日程或 API 配置；首次安装更新时，安卓可能要求允许云朵安装未知来源应用。
 提交内容排除 API Key、签名私钥、手机日程数据库、机器路径配置、构建输出和缓存。
 
 
