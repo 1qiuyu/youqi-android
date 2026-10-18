@@ -28,8 +28,10 @@ fastlane/report.xml
 *.db-wal
 *.sqlite
 *.sqlite3
-# This repository only stores source; cloud workflows stay disabled.
+# Release workflow builds a signed APK and publishes it to GitHub Releases.
 .github/workflows/
+!.github/workflows/
+!.github/workflows/release.yml
 .github/dependabot.yml
 
 # Speech recordings and imported personal audio stay local.

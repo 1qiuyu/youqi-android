@@ -23,6 +23,8 @@
   } catch (_) { }
   let dialogOpen=false,moving=false,dragging=false,frame=0,x=0,y=0,pointer=null,transition=0;
   let waiting=false,epoch=0,recording='idle',audio=null,voiceEpoch=0,ownsAudio=false,wheel=null,saveTimer;
+  let voiceMode='',liveSession='',voicePrefix='',voiceMessage='';
+  let voiceHeld=false,voiceReview=false,voicePointer=null,voiceKey='',voiceLimit=null,voiceRestart=null,voiceSegment=0;
   const cache=new Map(),requests=[];
   const order=[0,1,2,1,0,3];
   const app=$('appRoot');
@@ -36,8 +38,9 @@
   dialog.innerHTML=`<header class="cat-heading"><strong id="catTitle">云朵管家</strong><div><button type="button" data-cat="new">新对话</button> <button type="button" data-cat="close" aria-label="收起管家">收起</button></div></header>
     <div id="catMessages" class="cat-messages" role="log" aria-label="与云朵管家的对话" aria-live="polite"></div>
     <form id="catForm" class="cat-composer"><label class="sr-only" for="catInput">和云朵说点什么</label><textarea id="catInput" maxlength="4000" placeholder="想去哪个页面，或需要一起理清什么？"></textarea>
-      <div class="cat-composer-actions"><button type="button" data-cat="voice" id="catVoice">语音输入</button><button type="button" data-cat="transcribe" id="catTranscribe" hidden>转为文字</button><button type="submit" class="cat-send" id="catSend">发送</button></div>
-      <div class="cat-voice-status" id="catVoiceStatus" role="status" hidden></div><p class="cat-notice" id="catNotice"></p></form>`;
+      <div class="cat-composer-actions"><button type="button" id="catVoice" class="cat-mic" aria-label="按住说话" title="按住说话" aria-pressed="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="8" y="3" width="8" height="12" rx="4"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3m-4 0h8"/></svg></button><button type="button" data-cat="transcribe" id="catTranscribe" hidden>重试识别</button><button type="submit" class="cat-send" id="catSend">发送</button></div>
+      <div id="catVoiceReview" class="cat-voice-review" hidden><button type="button" data-cat="keep-voice" id="catKeepVoice">保留文字</button><button type="button" data-cat="delete-voice" id="catDeleteVoice">全部删除</button></div>
+      <div class="cat-voice-status" id="catVoiceStatus" role="status" hidden></div></form>`;
   document.body.append(pet,dialog);
 
   function checkedCall(method,...args) {
@@ -78,6 +81,8 @@
     const gaze=dragging||moving?'half':dialogOpen?eye():'closed';
     const src=sprite(pose,gaze);if(pet.firstElementChild.getAttribute('src')!==src)pet.firstElementChild.src=src;
     pet.hidden=!settings.visible||host.hasSheet()||document.hidden;
+    pet.setAttribute('aria-label',dialogOpen?'收起云朵管家':'云朵管家，点击对话，拖动停靠');
+    pet.setAttribute('aria-expanded',String(dialogOpen));
   }
   function bounds(){
     const bar=$('tabBar').getBoundingClientRect();
@@ -97,22 +102,21 @@
       {left:nx+'px',top:ny+'px'}],{duration:matchMedia('(prefers-reduced-motion: reduce)').matches?0:560,easing:'cubic-bezier(.2,.7,.3,1)'});
     place(nx,ny);try{await anim.finished;}catch{return false;}return generation===transition;
   }
-  function notice(){
-    let endpoint='你配置的 AI 接口';
-    try{endpoint=new URL(JSON.parse(host.call('getConfig')).baseUrl).host;}catch(_){}
-    $('catNotice').textContent=`发送问题时使用 ${endpoint}；与安排有关时附带相关时段的最多60项日程及最近6轮对话。${settings.saveHistory?'聊天仅在本机保存。':'聊天仅在本次运行中保留。'}`;
-  }
   async function open(){
     if(!settings.visible||moving||dialogOpen||host.hasSheet())return;
     moving=true;paint();
     if(!await fly((innerWidth-64)/2,8))return;
-    moving=false;dialogOpen=true;dialog.hidden=false;app.inert=true;notice();renderMessages();paint();
+    moving=false;dialogOpen=true;dialog.hidden=false;app.inert=true;renderMessages();paint();
+    dialog.setAttribute('aria-owns',pet.id);
     dialog.querySelector('[data-cat="close"]').focus({preventScroll:true});
   }
   function cleanupVoice(){
     voiceEpoch++;
+    voiceHeld=false;voiceReview=false;voicePointer=null;voiceKey='';clearTimeout(voiceLimit);clearTimeout(voiceRestart);
+    liveSession='';
+    if(voiceMode==='live')try{host.call('cancelLiveDictation');}catch(_){}
     if(ownsAudio)try{host.call('cancelRecording');host.call('cancelTranscription');host.call('discardAudio');}catch(_){}
-    ownsAudio=false;recording='idle';audio=null;voiceUI();
+    ownsAudio=false;recording='idle';audio=null;voiceMode='';voiceMessage='';voiceUI();
   }
   async function close(animate=true){
     if(!dialogOpen&&!moving)return;
@@ -151,7 +155,7 @@
       });box.append(row);
     });
     if(waiting){const p=document.createElement('p');p.className='cat-message assistant';p.textContent='正在想一想…';box.append(p);}
-    box.scrollTop=box.scrollHeight;$('catSend').disabled=waiting||recording!=='idle';
+    box.scrollTop=box.scrollHeight;voiceUI();
   }
   function validateActions(actions){
     if(!Array.isArray(actions))return [];
@@ -166,14 +170,14 @@
       if(action.type==='add'){
         if(!Array.isArray(action.events)||!action.events.length||action.events.length>30)return [];
         return [{type:'add',events:action.events,label:`新增 ${action.events.length} 项安排`,
-          detail:action.events.slice(0,5).map(e=>`${String(e.title||'未命名').slice(0,100)} · ${e.due||'待补充时间'}`).join('\n')+'\n打开预览后，检查内容并保存。'}];
+          detail:action.events.slice(0,5).map(e=>`${String(e.title||'未命名').slice(0,100)} · ${e.start?`开始 ${e.start} / 结束 ${e.due||'待补充'}`:`截止 ${e.due||'待补充时间'}`}`).join('\n')+'\n打开预览后，检查内容并保存。'}];
       }
       if(!['edit','delete','complete'].includes(action.type)||typeof action.id!=='string')return [];
       try{
         const event=host.describe(action);
         return [{type:action.type,id:action.id,date:typeof action.date==='string'?action.date:'',
           label:({edit:'编辑安排',delete:'删除安排',complete:'标记完成'})[action.type],
-          detail:`${event.title} · ${action.date||event.due}${event.repeat?'\n重复事项：修改或删除时还会确认范围。':''}`}];
+          detail:`${event.title} · ${action.date||event.due}${event.urgent?'\n紧急事项：会在接下来和待办中置顶。':''}${event.repeat?'\n重复事项：修改或删除时还会确认范围。':''}`}];
       }catch(_){return [];}
     });
   }
@@ -184,7 +188,7 @@
     append('user',text);append('assistant',`带你去${entry[0]}。`);close(false);host.navigate(entry[1]);return true;
   }
   async function send(){
-    const input=$('catInput'),text=input.value.trim();if(!text||waiting||recording!=='idle')return;
+    const input=$('catInput'),text=input.value.trim();if(!text||waiting||recording!=='idle'||voiceHeld||voiceReview)return;
     if(localNavigation(text)){input.value='';return;}
     const config=JSON.parse(host.call('getConfig'));
     if(!config.hasKey||!config.model){host.toast('先在设置 → AI 识别接口配置模型；管家沿用同一接口');return;}
@@ -201,64 +205,141 @@
     finally{waiting=false;renderMessages();}
   }
   function voiceUI(){
-    $('catVoice').textContent=recording==='recording'?'停止录音':recording==='starting'?'正在开启…':'语音输入';
-    $('catVoice').disabled=waiting||['starting','stopping','transcribing'].includes(recording);
+    const busy=recording!=='idle'||voiceHeld;
+    $('catVoice').disabled=waiting||voiceReview||(busy&&!voiceHeld);
+    $('catVoice').classList.toggle('is-held',voiceHeld);
+    $('catVoice').setAttribute('aria-pressed',String(voiceHeld));
+    $('catVoice').setAttribute('aria-label',voiceHeld?'松开结束':'按住说话');
+    $('catVoice').title=voiceHeld?'松开结束':'按住说话';
     $('catTranscribe').hidden=!audio||recording!=='idle';
-    $('catSend').disabled=waiting||recording!=='idle';
-    const output=$('catVoiceStatus');output.hidden=recording==='idle'&&!audio;
-    output.textContent=recording==='recording'?'正在录音，再点一次停止；离开应用也会停止。':recording==='transcribing'?'正在上传到你配置的语音服务并转写…':audio?'录音已就绪。点“转为文字”会上传到你配置的语音接口；转写后可修改再发送。':'正在准备录音…';
+    $('catSend').disabled=waiting||busy||voiceReview;
+    $('catInput').readOnly=busy||voiceReview;
+    $('catInput').placeholder=voiceHeld?'正在听…':'想去哪个页面，或需要一起理清什么？';
+    $('catVoiceReview').hidden=!voiceReview;
+    $('catKeepVoice').disabled=busy||!$('catInput').value.trim();
+    const output=$('catVoiceStatus');
+    output.textContent=recording==='recording'?(voiceMode==='live'?'正在听，松开结束':voiceMessage||'正在录音，松开后识别')
+      :recording==='transcribing'?'正在识别…':recording==='stopping'?'正在整理文字…':recording==='starting'?'正在开启麦克风…':voiceMessage;
+    output.hidden=!output.textContent;
   }
-  async function voice(){
-    if(waiting||!['idle','recording'].includes(recording))return;
-    const generation=++voiceEpoch;ownsAudio=true;
-    if(recording==='recording'){
-      recording='stopping';voiceUI();
-      try{const result=await host.request('stopRecording');if(generation!==voiceEpoch)return;audio=result;}
-      catch(error){host.toast(error.message);}
-      finally{if(generation===voiceEpoch){recording='idle';voiceUI();}}
-      return;
-    }
+  function voiceDraft(text){
+    $('catInput').value=[voicePrefix,String(text||'').trim()].filter(Boolean).join('\n').slice(0,4000);
+    $('catInput').scrollTop=$('catInput').scrollHeight;
+  }
+  function voiceError(error,generation){
+    if(generation!==voiceEpoch)return;
+    recording='idle';ownsAudio=false;liveSession='';voiceMode='';voiceMessage=error.message;voiceUI();
+  }
+  async function startFallback(generation){
+    if(generation!==voiceEpoch||!voiceHeld)return;
+    const speech=JSON.parse(host.call('getSpeechConfig'));
+    if(!speech.endpoint||!speech.model)throw new Error('系统实时识别不可用，请在设置中配置语音识别 API');
+    voiceMode='file';liveSession='';voiceMessage='实时识别不可用；请说话，松开后识别';voiceUI();
+    await host.request('startRecording');
+    if(generation!==voiceEpoch)return;
+    recording='recording';voiceUI();
+  }
+  async function startLiveSegment(generation){
+    if(generation!==voiceEpoch||!voiceHeld)return;
+    ownsAudio=true;recording='starting';voiceMode='live';
+    liveSession=`cat-${Date.now()}-${generation}-${++voiceSegment}`;voiceUI();
     try{
-      const speech=JSON.parse(host.call('getSpeechConfig'));
-      if(!speech.endpoint||!speech.model){ownsAudio=false;host.toast('先在设置 → 语音识别 API 配置独立的转写接口');return;}
-      host.call('discardAudio');audio=null;recording='starting';voiceUI();
-      await host.request('startRecording');
-      if(generation!==voiceEpoch){host.call('cancelRecording');return;}
-      recording='recording';voiceUI();
-    }catch(error){if(generation===voiceEpoch){recording='idle';ownsAudio=false;voiceUI();host.toast(error.message);}}
+      try{await host.request('startLiveDictation',liveSession);}
+      catch(error){
+        if(generation!==voiceEpoch)return;
+        if(/权限|正在进行|等待权限/.test(error.message))throw error;
+        await startFallback(generation);return;
+      }
+      if(generation===voiceEpoch&&liveSession&&recording==='starting'){recording='recording';voiceUI();}
+    }catch(error){voiceError(error,generation);}
+  }
+  function beginVoice(){
+    if(waiting||recording!=='idle'||voiceHeld||voiceReview)return false;
+    const generation=++voiceEpoch;
+    voiceHeld=true;voicePrefix=$('catInput').value.trim();voiceMessage='';audio=null;
+    voiceLimit=setTimeout(endVoice,300000);
+    try{host.call('discardAudio');}catch(_){}
+    startLiveSegment(generation);return true;
+  }
+  async function endVoice(){
+    if(!voiceHeld)return;
+    voiceHeld=false;voicePointer=null;voiceKey='';voiceReview=true;
+    clearTimeout(voiceLimit);clearTimeout(voiceRestart);
+    const generation=voiceEpoch;
+    // A release during permission/startup must never open a microphone later.
+    if(recording==='starting'){
+      voiceEpoch++;liveSession='';
+      try{host.call('cancelLiveDictation');host.call('cancelRecording');}catch(_){}
+      ownsAudio=false;recording='idle';voiceMode='';voiceMessage='';voiceUI();return;
+    }
+    if(recording!=='recording'){voiceUI();return;}
+    recording='stopping';voiceUI();
+    try{
+      if(voiceMode==='live'){await host.request('stopLiveDictation');return;}
+      const result=await host.request('stopRecording');if(generation!==voiceEpoch)return;
+      audio=result;recording='idle';transcribe();
+    }catch(error){voiceError(error,generation);}
+  }
+  function chooseVoice(keep){
+    if(!voiceReview||(keep&&(recording!=='idle'||voiceHeld)))return;
+    cleanupVoice();
+    if(!keep)$('catInput').value='';
+    voiceUI();$('catInput').focus({preventScroll:true});
   }
   async function transcribe(){
-    if(!audio||recording!=='idle')return;
-    const generation=++voiceEpoch;recording='transcribing';voiceUI();
+    if(!audio||recording!=='idle'||voiceHeld)return;
+    const generation=++voiceEpoch;voicePrefix=$('catInput').value.trim();recording='transcribing';voiceMessage='';voiceUI();
     try{
       const result=await host.request('transcribeAudio',audio.token);
       if(generation!==voiceEpoch)return;
-      $('catInput').value=($('catInput').value+'\n'+String(result.text||'')).trim().slice(0,4000);
+      if(!String(result.text||'').trim())throw new Error('没有识别到语音，请重试');
+      voiceDraft(result.text);
       host.call('discardAudio');audio=null;ownsAudio=false;
-      $('catInput').focus();
-    }catch(error){if(generation===voiceEpoch)host.toast(error.message);}
+    }catch(error){if(generation===voiceEpoch)voiceMessage=error.message;}
     finally{if(generation===voiceEpoch){recording='idle';voiceUI();}}
   }
+  const mic=$('catVoice');
+  mic.addEventListener('contextmenu',event=>event.preventDefault());
+  mic.addEventListener('pointerdown',event=>{
+    if(event.button!==0||!event.isPrimary)return;
+    event.preventDefault();
+    if(beginVoice()){voicePointer=event.pointerId;mic.setPointerCapture(event.pointerId);}
+  });
+  const releaseMic=event=>{if(event.pointerId===voicePointer){event.preventDefault();endVoice();}};
+  mic.addEventListener('pointerup',releaseMic);
+  mic.addEventListener('pointercancel',releaseMic);
+  mic.addEventListener('lostpointercapture',releaseMic);
+  mic.addEventListener('keydown',event=>{
+    if(![' ','Enter'].includes(event.key))return;
+    event.preventDefault();if(!event.repeat&&!voiceHeld&&beginVoice())voiceKey=event.key;
+  });
+  mic.addEventListener('keyup',event=>{
+    if(event.key===voiceKey){event.preventDefault();endVoice();}
+  });
+  // Screen readers can activate the same control without pointer/key events.
+  mic.addEventListener('click',event=>{event.preventDefault();if(event.detail===0){if(voiceHeld)endVoice();else beginVoice();}});
+  mic.addEventListener('blur',()=>{if(voiceKey)endVoice();});
   $('catForm').onsubmit=event=>{event.preventDefault();send().catch(error=>host.toast(error.message));};
   dialog.addEventListener('click',event=>{
     const button=event.target.closest('[data-cat]');if(!button)return;
     const action=button.dataset.cat;
     if(action==='close')close();
-    if(action==='voice')voice();
+    if(action==='keep-voice')chooseVoice(true);
+    if(action==='delete-voice')chooseVoice(false);
     if(action==='transcribe')transcribe();
     if(action==='new'){epoch++;history=[];requests.length=0;cleanupVoice();$('catInput').value='';saveHistory();renderMessages();}
   });
   dialog.addEventListener('keydown',event=>{
     if(event.key==='Escape'){event.preventDefault();close();}
     if(event.key==='Tab'){
-      const list=[...dialog.querySelectorAll('button:not([disabled]):not([hidden]),textarea')];
-      const first=list[0],last=list.at(-1);
-      if(event.shiftKey&&document.activeElement===first){last.focus();event.preventDefault();}
-      if(!event.shiftKey&&document.activeElement===last){first.focus();event.preventDefault();}
+      const list=[...dialog.querySelectorAll('button:not([disabled]):not([hidden]),textarea'),pet].filter(el=>el.getClientRects().length);
+      const index=list.indexOf(document.activeElement);
+      event.preventDefault();list[(index+(event.shiftKey?-1:1)+list.length)%list.length]?.focus();
     }
   });
   pet.addEventListener('pointerdown',event=>{
-    if(moving||dialogOpen||event.button!==0)return;
+    if(moving||event.button!==0)return;
+    if(dialogOpen){event.preventDefault();close();return;}
     pointer={id:event.pointerId,x:event.clientX,y:event.clientY,px:x,py:y,moved:false};pet.setPointerCapture(event.pointerId);
   });
   pet.addEventListener('pointermove',event=>{
@@ -277,51 +358,49 @@
     moving=true;const p=target();if(!await fly(p.x,p.y))return;dragging=false;moving=false;dock();
   }
   pet.addEventListener('pointerup',event=>endDrag(event));pet.addEventListener('pointercancel',event=>endDrag(event,true));
-  pet.addEventListener('click',event=>{if(event.detail===0)open();});
+  pet.addEventListener('click',event=>{if(event.detail===0){if(dialogOpen)close();else open();}});
 
   function settingsMarkup(){return `<div class="settings-group cat-settings"><h2>智能助手</h2><div class="plain-list">
     <label for="catVisible"><span>显示云朵管家</span><input id="catVisible" type="checkbox" ${settings.visible?'checked':''}></label>
-    <p class="cat-setting-note">靠边睡觉，点一下聊天；拖动时乘云，松手停靠。关闭后日历和待办照常使用。</p>
     <label for="catPalette">猫咪配色<select id="catPalette"><option value="white">极简线条</option><option value="cream">奶油填色</option><option value="custom">自定义配色</option></select></label>
-    <p class="cat-setting-note">浅色模式的预设自动变黑猫，深色恢复原色。自定义颜色按你的选择显示。</p>
-    <details class="cat-palette" id="catPaletteDetails"><summary>色圈 · 调整猫咪和云朵颜色</summary>
-      <div class="cat-wheel-editor"><div class="cat-wheel-area"><canvas id="color-wheel" width="208" height="208" tabindex="0" role="group" aria-label="颜色色圈"></canvas><span id="wheel-marker" class="cat-wheel-marker" aria-hidden="true"></span></div>
+    <div class="cat-palette" id="catPaletteDetails" data-open="false">
+      <button type="button" class="cat-palette-toggle" id="catPaletteToggle" aria-expanded="false" aria-controls="catPaletteBody"><span class="cat-palette-chevron" aria-hidden="true"></span><span>色圈</span></button>
+      <div class="cat-palette-clip" id="catPaletteBody"><div class="cat-palette-body"><div class="cat-wheel-editor"><div class="cat-wheel-area"><canvas id="color-wheel" width="208" height="208" tabindex="0" role="group" aria-label="颜色色圈"></canvas><span id="wheel-marker" class="cat-wheel-marker" aria-hidden="true"></span></div>
       <div class="cat-wheel-fields"><label for="color-part">调整部位<select id="color-part"><option value="cat">猫咪填色</option><option value="line">轮廓 / 五官</option><option value="cloud">云朵填色</option><option value="cloudLine">云朵边线</option></select></label>
       <label for="color-brightness">亮度<input id="color-brightness" type="range" min="0" max="100" value="100" aria-label="颜色亮度"></label>
       <label for="color-hex">颜色值<input id="color-hex" type="text" value="#f6d5a0" maxlength="7" autocomplete="off" spellcheck="false" aria-label="十六进制颜色值"></label><span id="selected-color" class="cat-selected-color"></span></div></div>
       <div class="cat-swatches">${Object.entries({cat:'猫咪',line:'轮廓',cloud:'云朵',cloudLine:'云边'}).map(([key,label])=>`<label>${label}<input type="color" data-cat-color="${key}" value="${settings.colors[key]}" aria-label="${label}颜色"></label>`).join('')}</div>
-      <label for="catOutline">内部透明，只画轮廓<input type="checkbox" id="catOutline" ${settings.outline?'checked':''}></label><button type="button" id="catReset">恢复默认外观</button>
-    </details>
+      <label for="catOutline">仅显示轮廓<input type="checkbox" id="catOutline" ${settings.outline?'checked':''}></label><button type="button" id="catReset">恢复默认外观</button></div></div></div>
     <label for="catSaveHistory">在本机保存聊天记录<input id="catSaveHistory" type="checkbox" ${settings.saveHistory?'checked':''}></label>
-    <p class="cat-setting-note">默认仅在内存保留；开启后只保存在本机。关闭会移除已保存的记录。</p>
     <div style="padding:0 16px 16px"><button type="button" id="catClearHistory">清空聊天记录</button></div>
-    <p class="cat-setting-note">沿用 AI 识别接口；语音使用单独配置的转写 API。每次数据改动都先确认。</p>
     </div></div>`;}
   function mountSettings(){
     const mount=$('assistantSettings');if(!mount||mount.dataset.mounted)return;
-    mount.dataset.mounted='true';mount.innerHTML=settingsMarkup();$('catPalette').value=settings.palette;
-    if(settings.palette==='custom')$('catPaletteDetails').open=true;
+    mount.dataset.mounted='true';mount.innerHTML=settingsMarkup();window.YunduoSelects?.enhance(mount);$('catPalette').value=settings.palette;$('catPalette')._customRefresh?.();
+    const setPaletteOpen=open=>{const panel=$('catPaletteDetails'),toggle=$('catPaletteToggle');if(!panel||!toggle)return;panel.dataset.open=String(open);toggle.setAttribute('aria-expanded',String(open));};
+    setPaletteOpen(settings.palette==='custom');
+    $('catPaletteToggle').onclick=()=>{const panel=$('catPaletteDetails');setPaletteOpen(panel.dataset.open!=='true');};
     wheel=createColorWheel(hex=>{
       const key=$('color-part').value;settings.colors[key]=hex;settings.palette='custom';
       if(key==='cat'||key==='cloud')settings.outline=false;
       syncColors(false);cache.clear();queueSave();paint();
     });
     function syncColors(updateWheel=true){
-      $('catPalette').value=settings.palette;$('catOutline').checked=settings.outline;
+      $('catPalette').value=settings.palette;$('catPalette')._customRefresh?.();$('catOutline').checked=settings.outline;
       mount.querySelectorAll('[data-cat-color]').forEach(input=>input.value=settings.colors[input.dataset.catColor]);
       if(updateWheel)wheel.set(settings.colors[$('color-part').value]);
     }
     syncColors();
     $('color-part').onchange=()=>wheel.set(settings.colors[$('color-part').value]);
     $('catVisible').onchange=()=>{settings.visible=$('catVisible').checked;savePrefs();if(!settings.visible)close(false);paint();};
-    $('catPalette').onchange=()=>{settings.palette=$('catPalette').value;if(settings.palette==='custom')$('catPaletteDetails').open=true;syncColors();savePrefs();paint();};
+    $('catPalette').onchange=()=>{settings.palette=$('catPalette').value;if(settings.palette==='custom')setPaletteOpen(true);syncColors();savePrefs();paint();};
     mount.querySelectorAll('[data-cat-color]').forEach(input=>input.oninput=()=>{
       const key=input.dataset.catColor;settings.colors[key]=input.value;settings.palette='custom';$('color-part').value=key;
       if(key==='cat'||key==='cloud')settings.outline=false;syncColors();cache.clear();queueSave();paint();
     });
     $('catOutline').onchange=()=>{settings.outline=$('catOutline').checked;settings.palette='custom';syncColors();cache.clear();savePrefs();paint();};
     $('catReset').onclick=()=>{settings.palette='white';settings.colors={...defaults};settings.outline=false;syncColors();cache.clear();savePrefs();paint();};
-    $('catSaveHistory').onchange=()=>{settings.saveHistory=$('catSaveHistory').checked;savePrefs();saveHistory();notice();};
+    $('catSaveHistory').onchange=()=>{settings.saveHistory=$('catSaveHistory').checked;savePrefs();saveHistory();};
     $('catClearHistory').onclick=()=>{epoch++;history=[];saveHistory();renderMessages();host.toast('聊天记录已清空');};
   }
   window.YunduoCat={
@@ -329,13 +408,48 @@
     suspend(){close(false);paint();},
     handleBack(){if(dialogOpen||moving){close();return true;}return false;},
     onAudioResult(result){
-      if(!ownsAudio||!['speech-stopped','speech-interrupted'].includes(result.id))return false;
-      voiceEpoch++;recording='idle';if(result.ok)audio=result.data;else host.toast(result.error);voiceUI();return true;
+      if(result.id==='speech-live'){
+        if(!ownsAudio||!liveSession||result.data?.session!==liveSession)return true;
+        const data=result.data;
+        if(data.text)voiceDraft(data.text);
+        if(data.final){
+          const generation=voiceEpoch;liveSession='';recording='idle';
+          voiceMessage=data.error||'';voiceUI();
+          if(voiceHeld&&!data.text&&/系统实时识别暂不可用|系统识别正在使用中/.test(data.error)){
+            recording='starting';voiceUI();startFallback(generation).catch(error=>{
+              voiceError(error,generation);
+            });
+          }else{
+            ownsAudio=false;voiceMode='';
+            if(voiceHeld&&(!data.error||data.error==='没有识别到语音，请重试')){
+              voicePrefix=$('catInput').value.trim();voiceMessage='';voiceUI();
+              voiceRestart=setTimeout(()=>startLiveSegment(generation),300);
+            }
+          }
+        }
+        return true;
+      }
+      if(!ownsAudio||voiceMode!=='file'||!['speech-stopped','speech-interrupted'].includes(result.id))return false;
+      voiceHeld=false;voiceReview=true;voicePointer=null;voiceKey='';clearTimeout(voiceLimit);clearTimeout(voiceRestart);
+      voiceEpoch++;recording='idle';if(result.ok)audio=result.data;else voiceMessage=result.error;voiceUI();
+      if(audio&&!document.hidden&&dialogOpen)transcribe();return true;
     }
   };
   window.addEventListener('yunduo-appearance',()=>{paint();});
   window.addEventListener('resize',()=>{if(moving||dragging)return;if(dialogOpen)place((innerWidth-64)/2,8);else dock();});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden&&recording==='recording')$('catVoiceStatus').textContent='离开应用，录音将停止。';paint();});
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden&&voiceHeld)endVoice();
+    if(!document.hidden&&dialogOpen&&audio&&recording==='idle')transcribe();paint();
+  });
+  pet.addEventListener('keydown',event=>{
+    if(!dialogOpen)return;
+    if(event.key==='Escape'){event.preventDefault();close();}
+    if(event.key==='Tab'){
+      event.preventDefault();
+      const list=[...dialog.querySelectorAll('button:not([disabled]):not([hidden]),textarea')].filter(el=>el.getClientRects().length);
+      (event.shiftKey?list.at(-1):list[0])?.focus();
+    }
+  });
   window.addEventListener('pagehide',()=>{clearTimeout(saveTimer);savePrefs();cleanupVoice();});
   setInterval(()=>{if(document.hidden||(!settings.visible&&!dialogOpen))return;if(!matchMedia('(prefers-reduced-motion: reduce)').matches)frame++;paint();},160);
   mountSettings();dock();renderMessages();
