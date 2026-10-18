@@ -13,7 +13,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      KEYSTORE_BASE64: ${{ secrets.YUNDUO_KEYSTORE_BASE64 }}
+      DEBUG_KEYSTORE_BASE64: ${{ secrets.YUNDUO_DEBUG_KEYSTORE_BASE64 }}
     steps:
       - name: 拉取源码
         uses: actions/checkout@v4
@@ -24,16 +24,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: 恢复发布签名
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
+      - name: 恢复调试签名（保持手机可覆盖更新）
+        if: ${{ env.DEBUG_KEYSTORE_BASE64 != '' }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/yunduo-release.keystore"
-          cat >> "$GITHUB_ENV" <<EOF
-          SIGNING_STORE_FILE=$RUNNER_TEMP/yunduo-release.keystore
-          SIGNING_STORE_PASSWORD=${{ secrets.YUNDUO_STORE_PASSWORD }}
-          SIGNING_KEY_ALIAS=${{ secrets.YUNDUO_KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD=${{ secrets.YUNDUO_KEY_PASSWORD }}
-          EOF
+          mkdir -p "$HOME/.android"
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
 
       - name: 构建 APK
         run: ./gradlew :app:assembleFossDebug --no-daemon
