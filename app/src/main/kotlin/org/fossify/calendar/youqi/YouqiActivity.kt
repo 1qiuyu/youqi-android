@@ -13,6 +13,8 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.provider.Settings
 import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -28,12 +30,15 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.SocketTimeoutException
+import java.net.HttpURLConnection
+import java.net.URL
 import java.time.LocalDate
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -52,6 +57,9 @@ class YouqiActivity : AppCompatActivity() {
     private var voiceAudio: SpeechAudio? = null
     @Synchronized private fun audio() = voiceAudio ?: SpeechAudio(this).also { voiceAudio = it }
     private var pendingMicRequest: String? = null
+    private var pendingLiveSession: String? = null
+    private var liveDictation: LiveDictation? = null
+    private fun live() = liveDictation ?: LiveDictation(this) { send("speech-live", it) }.also { liveDictation = it }
     private val speechGeneration = java.util.concurrent.atomic.AtomicInteger()
     private val filesExecutor = Executors.newSingleThreadExecutor()
     private val networkExecutor = Executors.newSingleThreadExecutor()
@@ -411,9 +419,101 @@ class YouqiActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateConnection(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+        connectTimeout = 15_000
+        readTimeout = 30_000
+        instanceFollowRedirects = true
+        setRequestProperty("Accept", "application/vnd.github+json")
+        setRequestProperty("User-Agent", "Yunduo/${org.fossify.calendar.BuildConfig.VERSION_NAME}")
+    }
+
+    private fun versionParts(value: String): List<Int> = value.trim().removePrefix("v").split('.').map {
+        it.takeWhile(Char::isDigit).toIntOrNull() ?: 0
+    }.let { it + List((3 - it.size).coerceAtLeast(0)) { 0 } }
+
+    private fun compareVersions(left: String, right: String): Int {
+        val a = versionParts(left); val b = versionParts(right)
+        return (0..2).firstOrNull { a[it] != b[it] }?.let { a[it].compareTo(b[it]) } ?: 0
+    }
+
+    private fun checkForUpdate(id: String) {
+        networkExecutor.execute {
+            try {
+                val connection = updateConnection("https://api.github.com/repos/1qiuyu/youqi-android/releases/latest")
+                val body = connection.inputStream.bufferedReader().use { it.readText() }
+                connection.disconnect()
+                val release = JSONObject(body)
+                val tag = release.optString("tag_name").takeIf { it.isNotBlank() } ?: error("发布版本缺少版本号")
+                val assets = release.optJSONArray("assets") ?: org.json.JSONArray()
+                var apkUrl = ""
+                var apkName = ""
+                for (index in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(index) ?: continue
+                    val name = asset.optString("name")
+                    if (name.endsWith(".apk", ignoreCase = true)) {
+                        apkName = name; apkUrl = asset.optString("browser_download_url"); break
+                    }
+                }
+                require(apkUrl.startsWith("https://github.com/") || apkUrl.startsWith("https://objects.githubusercontent.com/")) { "发布中没有可安装的 APK" }
+                val current = packageManager.getPackageInfo(packageName, 0).versionName ?: org.fossify.calendar.BuildConfig.VERSION_NAME
+                send(id, JSONObject()
+                    .put("current", current)
+                    .put("latest", tag.removePrefix("v"))
+                    .put("available", compareVersions(tag, current) > 0)
+                    .put("url", apkUrl)
+                    .put("name", apkName)
+                    .put("notes", release.optString("body").take(2000)))
+            } catch (error: Exception) { send(id, error = errorMessage(error)) }
+        }
+    }
+
+    private fun downloadUpdate(id: String, rawUrl: String) {
+        networkExecutor.execute {
+            try {
+                val parsed = URL(rawUrl)
+                require(parsed.protocol == "https" && (parsed.host == "github.com" || parsed.host.endsWith(".githubusercontent.com"))) { "更新地址不受信任" }
+                val connection = updateConnection(rawUrl)
+                connection.connect()
+                require(connection.responseCode in 200..299) { "下载更新失败（HTTP ${connection.responseCode}）" }
+                require(connection.url.host == "github.com" || connection.url.host.endsWith(".githubusercontent.com")) { "更新跳转地址不受信任" }
+                val length = connection.contentLengthLong
+                require(length <= 120L * 1024 * 1024 || length < 0) { "更新包过大，已停止下载" }
+                val temporary = File(cacheDir, "yunduo-update.apk.part")
+                val target = File(cacheDir, "yunduo-update.apk")
+                connection.inputStream.use { input -> java.io.FileOutputStream(temporary).use { output ->
+                    val buffer = ByteArray(32 * 1024); var total = 0L
+                    while (true) {
+                        val count = input.read(buffer); if (count < 0) break
+                        total += count; require(total <= 120L * 1024 * 1024) { "更新包过大，已停止下载" }
+                        output.write(buffer, 0, count)
+                    }
+                } }
+                connection.disconnect()
+                if (target.exists()) target.delete()
+                require(temporary.renameTo(target)) { "更新文件保存失败" }
+                installDownloadedApk(id, target)
+            } catch (error: Exception) { send(id, error = errorMessage(error)) }
+        }
+    }
+
+    private fun installDownloadedApk(id: String, file: File) = runOnUiThread {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+                send(id, JSONObject().put("permissionRequired", true))
+                return@runOnUiThread
+            }
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+            send(id, JSONObject().put("started", true))
+        } catch (error: Exception) { send(id, error = "无法打开安装程序：${error.message ?: "请稍后重试"}") }
+    }
+
     private fun beginRecording(id: String) {
         if (isFinishing || isDestroyed) { send(id, error = "页面已关闭，请重新开始"); return }
         try {
+            check(liveDictation?.active() != true) { "实时语音输入正在进行" }
             audio().start {
                 runOnUiThread {
                     if (voiceAudio?.isRecording() == true) {
@@ -426,22 +526,38 @@ class YouqiActivity : AppCompatActivity() {
         } catch (error: Exception) { send(id, error = errorMessage(error)) }
     }
 
+    private fun beginLiveDictation(id: String, session: String) {
+        try {
+            check(!isFinishing && !isDestroyed) { "页面已关闭，请重新开始" }
+            check(voiceAudio?.isRecording() != true) { "录音正在进行" }
+            require(session.length in 1..100) { "语音会话无效" }
+            live().start(session)
+            send(id, JSONObject().put("session", session).put("live", true))
+        } catch (error: Exception) { send(id, error = errorMessage(error)) }
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != REQUEST_AUDIO) return
         val id = pendingMicRequest ?: return
+        val session = pendingLiveSession
         pendingMicRequest = null
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) beginRecording(id)
+        pendingLiveSession = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            if (session != null) beginLiveDictation(id, session) else beginRecording(id)
+        }
         else send(id, error = "麦克风权限未开启，可在系统设置中授权，也可以使用下方导入音频")
     }
 
     override fun onStop() {
+        liveDictation?.stop()
         if (voiceAudio?.isRecording() == true) {
             try { send("speech-stopped", audio().stop().json().put("interrupted", true)) }
             catch (error: Exception) { send("speech-interrupted", error = errorMessage(error)) }
         }
         pendingMicRequest?.let { send(it, error = "录音已取消"); pendingMicRequest = null }
+        pendingLiveSession = null
         super.onStop()
     }
 
@@ -538,7 +654,7 @@ class YouqiActivity : AppCompatActivity() {
             networkExecutor.execute { try { send(id, speech.listModels(content)) } catch (error: Exception) { send(id, error = errorMessage(error)) } }
         }
         @JavascriptInterface fun startRecording(id: String) = runOnUiThread {
-            if (pendingMicRequest != null || voiceAudio?.isRecording() == true) { send(id, error = "录音已开始或正在等待权限"); return@runOnUiThread }
+            if (pendingMicRequest != null || voiceAudio?.isRecording() == true || liveDictation?.active() == true) { send(id, error = "录音已开始或正在等待权限"); return@runOnUiThread }
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) beginRecording(id)
             else { pendingMicRequest = id; requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO) }
         }
@@ -546,8 +662,29 @@ class YouqiActivity : AppCompatActivity() {
             try { send(id, audio().stop().json()) } catch (error: Exception) { send(id, error = errorMessage(error)) }
         }
         @JavascriptInterface fun cancelRecording() = runOnUiThread {
-            pendingMicRequest?.let { send(it, error = "录音已取消"); pendingMicRequest = null }
+            if (pendingLiveSession == null) pendingMicRequest?.let { send(it, error = "录音已取消"); pendingMicRequest = null }
             voiceAudio?.cancelRecording()
+        }
+        @JavascriptInterface fun startLiveDictation(id: String, session: String) = runOnUiThread {
+            if (pendingMicRequest != null || voiceAudio?.isRecording() == true || liveDictation?.active() == true) {
+                send(id, error = "语音输入正在进行"); return@runOnUiThread
+            }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) beginLiveDictation(id, session)
+            else {
+                pendingMicRequest = id; pendingLiveSession = session
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO)
+            }
+        }
+        @JavascriptInterface fun stopLiveDictation(id: String) = runOnUiThread {
+            liveDictation?.stop()
+            send(id, JSONObject().put("stopping", true))
+        }
+        @JavascriptInterface fun cancelLiveDictation() = runOnUiThread {
+            if (pendingLiveSession != null) {
+                pendingMicRequest?.let { send(it, error = "语音输入已取消") }
+                pendingMicRequest = null; pendingLiveSession = null
+            }
+            liveDictation?.cancel()
         }
         @JavascriptInterface fun pickAudio(id: String) { openPicker("audio", id) }
         @JavascriptInterface fun discardAudio() = runOnUiThread { voiceAudio?.discard() }
@@ -586,6 +723,9 @@ class YouqiActivity : AppCompatActivity() {
             return manager.primaryClip?.getItemAt(0)?.coerceToText(this@YouqiActivity)?.toString()?.take(20_000).orEmpty()
         }
 
+        @JavascriptInterface fun checkForUpdate(id: String) = this@YouqiActivity.checkForUpdate(id)
+        @JavascriptInterface fun downloadUpdate(id: String, url: String) = this@YouqiActivity.downloadUpdate(id, url)
+
         @JavascriptInterface fun license(): String = assets.open("youqi/LICENSE.txt").bufferedReader().use { it.readText() }
     }
 
@@ -593,6 +733,7 @@ class YouqiActivity : AppCompatActivity() {
         ready = false
         pendingImage = null
         voiceAudio?.close()
+        liveDictation?.close()
         speech.cancel()
         networkExecutor.shutdownNow()
         filesExecutor.shutdownNow()

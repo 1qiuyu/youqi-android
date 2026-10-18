@@ -202,6 +202,7 @@ class MiniMaxService(context: Context, private val openConnection: (URL) -> Http
             只输出一个 JSON 对象，不要 Markdown，不要解释。格式：
             {"events":[{"title":"事项名称","due":"yyyy-MM-ddTHH:mm 或 null","start":"yyyy-MM-ddTHH:mm 或 null","allDay":false,"location":"","note":"","repeatFreq":"none|daily|weekly|monthly|yearly","repeatInterval":1,"repeatWeekdays":[],"until":"yyyy-MM-dd 或 null","assumedTime":false,"warning":""}]}
             规则：
+            ${ScheduleTimeRange.FIELD_RULES}
             1. due 表示截止或活动结束时间；start 是可选的实际开始时间。默认是截止任务。
             2. 只有日期没有钟点时，补当天 23:59，assumedTime=true，并在 warning 说明补全。
             3. 只给了开始时间、没给结束时间时，保留 start，due=null，提示补充结束时间。禁止猜测活动时长。
@@ -235,7 +236,19 @@ class MiniMaxService(context: Context, private val openConnection: (URL) -> Http
         require(text.isNotBlank() && text.length <= 20_000) { "请提供 1–20000 字的原文" }
         val reference = LocalDate.parse(referenceDate)
         val response = request(systemPrompt(reference), "消息参考日期：$reference\n以下是待提取的原文：\n$text", 4096)
-        return parseEvents(response)
+        val parsed = parseEvents(response)
+        normalizeExplicitRange(parsed.getJSONArray("events"), text)
+        return parsed
+    }
+
+    private fun normalizeExplicitRange(events: JSONArray, text: String) {
+        if (events.length() != 1) return
+        val span = ScheduleTimeRange.find(text) ?: return
+        val event = events.optJSONObject(0) ?: return
+        val day = sequenceOf(event.optString("start"), event.optString("due"))
+            .mapNotNull { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }.firstOrNull() ?: return
+        val (start, due) = span.on(day)
+        event.put("start", start).put("due", due).put("allDay", false)
     }
 
     /** Proposes actions only. Database changes remain behind explicit UI confirmation. */
@@ -251,10 +264,12 @@ class MiniMaxService(context: Context, private val openConnection: (URL) -> Http
             你是云朵App的温柔像素猫管家。简短、亲切、有主见，不催促、不说教。
             只在本App内提供导航、日历待办管理、规划拆解与一般问答；不能操作其他App、文件或系统。
             当前手机时间：${ZonedDateTime.now()}。根据真实当前日期理解今天、明天与下周。
+            ${ScheduleTimeRange.FIELD_RULES}
             只输出JSON：{"reply":"回答","actions":[]}。actions最多5个。
             支持的action：
             {"type":"navigate","tab":"home|calendar|tasks|settings"}
-            {"type":"add","events":[{"title":"事项","due":"yyyy-MM-ddTHH:mm","start":null,"allDay":false,"location":"","note":"","repeatFreq":"none","showInTasks":true}]}
+            {"type":"add","events":[{"title":"事项","due":"yyyy-MM-ddTHH:mm","start":null,"allDay":false,"location":"","note":"","repeatFreq":"none","showInTasks":true,"urgent":false}]}
+            如果用户明确说“紧急”“优先处理”或“置顶”，新增事项将 urgent 设为 true；不确定时设为 false。
             {"type":"edit|complete|delete","id":"上下文真实id","date":"上下文occurrenceDate","title":"事项名称"}
             编辑操作只打开用户可编辑的原有表单，不会自动修改。新增只打开预览；完成和删除也需要用户明确确认。
             禁止说已经保存、完成或删除；在实际执行前只能说已准备好方案，请确认。
@@ -285,6 +300,8 @@ class MiniMaxService(context: Context, private val openConnection: (URL) -> Http
         if (parsed == null) return JSONObject().put("reply", content.take(6000)).put("actions", JSONArray())
         val actions = parsed.optJSONArray("actions") ?: JSONArray()
         require(actions.length() <= 5) { "操作方案过多，请拆成几次提问" }
+        if (actions.length() == 1) actions.optJSONObject(0)?.takeIf { it.optString("type") == "add" }
+            ?.optJSONArray("events")?.let { normalizeExplicitRange(it, text) }
         return JSONObject().put("reply", parsed.optString("reply").take(6000)).put("actions", actions)
     }
 

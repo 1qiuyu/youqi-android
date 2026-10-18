@@ -84,6 +84,87 @@
   const icon = (name, cls = '') =>
     `<svg class="${cls}" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ICONS.calendar}</svg>`;
 
+  /* Replace Android's native select popup with a themed, animated menu. The
+     original select remains in the DOM (visually hidden) so FormData and the
+     existing change handlers keep working unchanged. */
+  function enhanceSelects(root = document) {
+    root.querySelectorAll('select:not(.custom-select-native)').forEach(select => {
+      if (select.closest('.custom-select')) return;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'custom-select';
+      const parent = select.parentNode;
+      parent.insertBefore(wrapper, select);
+      wrapper.appendChild(select);
+      select.classList.add('custom-select-native');
+
+      const trigger = document.createElement('button');
+      trigger.type = 'button';
+      trigger.className = 'custom-select-trigger';
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      trigger.setAttribute('aria-expanded', 'false');
+      wrapper.insertBefore(trigger, select);
+      const menu = document.createElement('div');
+      menu.className = 'custom-select-menu';
+      menu.setAttribute('role', 'listbox');
+      wrapper.insertBefore(menu, select);
+
+      const close = () => {
+        wrapper.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+      };
+      const refresh = () => {
+        const selected = [...select.options].find(option => option.value === select.value) || select.options[0];
+        trigger.textContent = selected?.textContent || '';
+        trigger.disabled = select.disabled;
+        wrapper.classList.toggle('disabled', select.disabled);
+        menu.replaceChildren(...[...select.options].map(option => {
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'custom-select-option';
+          item.textContent = option.textContent;
+          item.dataset.value = option.value;
+          item.disabled = option.disabled;
+          item.setAttribute('role', 'option');
+          item.setAttribute('aria-selected', String(option.value === select.value));
+          item.addEventListener('click', event => {
+            event.stopPropagation();
+            if (item.disabled) return;
+            select.value = item.dataset.value;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            close();
+            refresh();
+          });
+          return item;
+        }));
+      };
+      select._customRefresh = refresh;
+      trigger.addEventListener('click', event => {
+        event.stopPropagation();
+        document.querySelectorAll('.custom-select.open').forEach(other => {
+          if (other !== wrapper) other.classList.remove('open');
+        });
+        refresh();
+        if (select.disabled) return;
+        const open = !wrapper.classList.contains('open');
+        wrapper.classList.toggle('open', open);
+        trigger.setAttribute('aria-expanded', String(open));
+      });
+      trigger.addEventListener('keydown', event => {
+        if (event.key === 'Escape') close();
+        if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault(); trigger.click();
+        }
+      });
+      select.addEventListener('change', refresh);
+      new MutationObserver(refresh).observe(select, { childList: true });
+      refresh();
+    });
+  }
+  document.addEventListener('click', event => {
+    if (!event.target.closest('.custom-select')) document.querySelectorAll('.custom-select.open').forEach(wrapper => wrapper.classList.remove('open'));
+  });
+  window.YunduoSelects = { enhance: enhanceSelects };
+
   /* ------------------------------------------------------------ 基础工具 */
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pad = value => String(value).padStart(2, '0');
@@ -271,6 +352,7 @@
         skippedDates: Array.isArray(item.skippedDates) ? item.skippedDates.filter(validDay) : [],
         showOnHome: typeof item.showOnHome === 'boolean' ? item.showOnHome : null,
         showInTasks: typeof item.showInTasks === 'boolean' ? item.showInTasks : null,
+        urgent: item.urgent === true,
         nativeId: item.nativeId || null
       };
     });
@@ -439,7 +521,7 @@
     return `<button class="featured" style="${eventStyle(event)}" data-action="detail" data-id="${escape(event.id)}" data-date="${event.occurrenceDate}"
         aria-label="${escape(event.title)}，${rangeText(event)}，${label} ${clock.compact}">
       <div class="featured-head">
-        <div class="featured-title">${escape(event.title)}</div>
+        <div class="featured-title">${event.urgent ? `<span class="urgent-mark">${icon('alert')}紧急</span>` : ''}${escape(event.title)}</div>
         ${heading ? `<span class="chip accent">${heading}</span>` : ''}
       </div>
       <div class="featured-meta">
@@ -470,7 +552,7 @@
         aria-label="${escape(event.title)}，${rangeText(event)}${status ? `，${status}` : ''}">
       <span class="row-marker" aria-hidden="true"></span>
       <span class="row-main">
-        <span class="row-title">${escape(event.title)}</span>
+        <span class="row-title">${event.urgent ? `<span class="urgent-mark">${icon('alert')}紧急</span>` : ''}${escape(event.title)}</span>
         <span class="row-meta">${icon('clock')}<span>${timeText}</span>${meta ? `<span class="dot-sep">·</span><span>${escape(meta)}</span>` : ''}</span>
       </span>
       ${status ? `<span class="row-side"><span class="row-status ${statusClass}">${status}</span></span>` : ''}
@@ -484,7 +566,8 @@
       events = occurrences(atDay(dateKey(NOW)), addDays(NOW, 30))
         .filter(e => !e.done && new Date(e.due) >= NOW)
         .filter(e => shownOnHome(e, regular))
-        .sort((a, b) => (a.allDay - b.allDay) || (eventMoment(a) - eventMoment(b)));
+        // Urgent items always lead the home queue; date ordering remains the tie-breaker.
+        .sort((a, b) => (Number(b.urgent) - Number(a.urgent)) || (a.allDay - b.allDay) || (eventMoment(a) - eventMoment(b)));
     } catch (error) {
       return `<div class="content">${stateBlock('error', 'alert', '无法读取日程', escape(error.message),
         `<button class="primary-button" data-action="reload">重新加载</button>`)}</div>`;
@@ -726,7 +809,8 @@
     const list = state.filter === 'pending' ? pending : state.filter === 'done' ? done : weekEvents;
 
     const groups = [];
-    for (const event of [...list].sort((a, b) => new Date(a.due) - new Date(b.due))) {
+    // Keep urgent tasks at the top of the week, then preserve the chronological order.
+    for (const event of [...list].sort((a, b) => (Number(b.urgent) - Number(a.urgent)) || (new Date(a.due) - new Date(b.due)))) {
       const key = displayDay(event);
       let group = groups[groups.length - 1];
       if (!group || group.key !== key) groups.push(group = { key, items: [] });
@@ -750,7 +834,7 @@
                 role="checkbox" aria-checked="${e.done}" aria-label="${e.done ? '恢复未完成' : '标记完成'}：${escape(e.title)}">${icon('check')}</button>
               <button class="task-details" data-action="detail" data-id="${escape(e.id)}" data-date="${e.occurrenceDate}">
                 <span class="task-main">
-                  <span class="task-name">${escape(e.title)}</span>
+                  <span class="task-name">${e.urgent ? `<span class="urgent-mark">${icon('alert')}紧急</span>` : ''}${escape(e.title)}</span>
                   <span class="task-meta"><span class="dot"></span>${e.allDay ? '全天' : e.start ? `${hhmm(e.start)}–${sameDay(e.start, e.due) ? '' : `${dateLabel(e.due)} `}${hhmm(e.due)}` : `${dueClock(e)} 截止`}${e.repeat ? ` · ${escape(repeatSummary(e))}` : ''}${e.location ? ` · ${escape(e.location)}` : ''}</span>
                 </span>${icon('chevron')}
               </button>
@@ -772,31 +856,26 @@
 
   /* ------------------------------------------------------------- 设置页 */
   function renderSettings() {
-    const config = apiConfig();
-    const aiStatus = config.hasKey && config.model
-      ? `${escape(config.model)} · ${config.tested ? '连接正常' : '尚未测试'}`
-      : '未配置，识别日程前需要填写';
     const theme = settings.theme;
     const themeOption = (value, label, cls) =>
       `<button class="theme-option ${theme === value ? 'active' : ''}" data-action="set-theme" data-theme="${value}" aria-pressed="${theme === value}">
         <span class="theme-swatch ${cls}"></span><span class="theme-name">${label}</span>
       </button>`;
 
-    const row = (ic, title, desc, action) =>
+    const row = (ic, title, action) =>
       `<button class="setting-row" data-action="${action}"><span class="setting-icon">${icon(ic)}</span>
-        <span class="setting-copy"><strong>${title}</strong><small>${desc}</small></span>${icon('chevron', 'chevron')}</button>`;
+        <span class="setting-copy"><strong>${title}</strong></span>${icon('chevron', 'chevron')}</button>`;
 
     const preview = settings.hasBackground
       ? `<div class="bg-preview">
           <div class="bg-preview-image" style="background-image:url('${backgroundUrl}');opacity:${settings.bgOpacity};filter:blur(${settings.bgBlur}px)"></div>
           <div class="bg-preview-scrim" style="opacity:${settings.bgScrim}"></div>
-          <div class="bg-preview-sample"><strong>高数 · 三教 2101</strong><small>10:00 – 11:40</small></div>
-        </div>
-        <p class="helper-note">预览即实际效果。文字承载面会随遮罩强度自动加厚，任何图片上都保持可读。</p>`
-      : `<div class="bg-preview"><div class="bg-preview-empty">${icon('image')}<span>还没有选择背景图片</span></div></div>`;
+
+        </div>`
+      : '';
 
     return `<header class="appbar">
-      <div class="appbar-title"><p class="appbar-eyebrow">云朵 0.4.0</p><h1>设置</h1></div>
+      <div class="appbar-title"><h1>设置</h1></div>
     </header>
     <div class="content">
       <div class="settings-group">
@@ -807,7 +886,7 @@
           </div>
           <button class="setting-row" data-action="pick-background">
             <span class="setting-icon">${icon('image')}</span>
-            <span class="setting-copy"><strong>背景图片</strong><small>${settings.hasBackground ? `已设置 · ${escape(settings.bgName || '自定义图片')}` : '选择一张图片作为背景'}</small></span>
+            <span class="setting-copy"><strong>背景图片</strong></span>
             ${icon('chevron', 'chevron')}
           </button>
           ${settings.hasBackground ? `
@@ -818,7 +897,7 @@
             <div class="setting-slider">
               <div class="setting-slider-head"><strong>遮罩强度</strong><span class="setting-value">${Math.round(settings.bgScrim * 100)}%</span></div>
               <input type="range" min="0" max="90" step="5" value="${Math.round(settings.bgScrim * 100)}" data-slider="bgScrim" aria-label="遮罩强度">
-              <p>遮罩越弱，文字承载面越厚，保证文字清晰。</p>
+
             </div>
             <div class="setting-slider">
               <div class="setting-slider-head"><strong>模糊程度</strong><span class="setting-value">${settings.bgBlur}px</span></div>
@@ -826,7 +905,7 @@
             </div>
             <button class="setting-row" data-action="clear-background" style="border-bottom:0">
               <span class="setting-icon" style="background:var(--danger-soft);color:var(--danger)">${icon('trash')}</span>
-              <span class="setting-copy"><strong>移除背景图片</strong><small>恢复纯色背景</small></span>
+              <span class="setting-copy"><strong>移除背景图片</strong></span>
             </button>` : ''}
         </div>
         ${preview}
@@ -835,8 +914,8 @@
       <div class="settings-group">
         <h2>日程</h2>
         <div class="plain-list">
-          ${row('plus', '添加日程', '手动添加，或从文字 / 图片识别', 'open-add')}
-          ${row('repeat', '重复规则', '每天 / 每周 / 每月 / 每年，可自定义间隔与结束日期', 'repeat-help')}
+          ${row('plus', '添加日程', 'open-add')}
+          ${row('repeat', '重复规则', 'repeat-help')}
         </div>
       </div>
 
@@ -844,27 +923,26 @@
       <div class="settings-group">
         <h2>智能录入</h2>
         <div class="plain-list">
-          ${row('spark', 'AI 识别接口', aiStatus, 'api-info')}
-          ${row('mic', '语音识别 API', '录音与音频转写 · 自定义接口', 'speech-config')}
+          ${row('spark', 'AI 识别接口', 'api-info')}
+          ${row('mic', '语音识别 API', 'speech-config')}
         </div>
-        <p class="helper-note">识别时会把原文或图片发送到你填写的 API 地址。应用没有自建服务器，密钥仅在本机加密保存。</p>
       </div>
 
       <div class="settings-group">
         <h2>数据</h2>
         <div class="plain-list">
-          ${row('upload', '导入课表', '选择 ThuInfo 导出的 .ics 文件', 'import-ics')}
-          ${row('download', '导出备份', '日程、颜色、重复规则与完成记录', 'export-backup')}
-          ${row('folder', '恢复备份', '选择云朵 JSON 备份文件', 'import-backup')}
+          ${row('upload', '导入课表', 'import-ics')}
+          ${row('download', '导出备份', 'export-backup')}
+          ${row('folder', '恢复备份', 'import-backup')}
         </div>
-        <p class="helper-note">备份不含 API Key。系统自动备份已关闭，建议定期手动导出。</p>
       </div>
 
       <div class="settings-group">
         <h2>关于</h2>
         <div class="plain-list">
-          ${row('shield', '本机保存', '日程离线可用，密钥单独加密', 'storage-info')}
-          ${row('info', '关于云朵', '基于 Fossify Calendar · GPL-3.0', 'about')}
+          ${row('shield', '本机保存', 'storage-info')}
+          ${row('refresh', '检查更新', 'check-update')}
+          ${row('info', '关于云朵', 'about')}
         </div>
       </div>
     </div>`;
@@ -893,6 +971,7 @@
       : state.tab === 'calendar' ? renderCalendar()
         : state.tab === 'tasks' ? renderTasks()
           : renderSettings();
+    enhanceSelects(screenRoot);
 
     const content = screenRoot.querySelector('.content');
     if (content && state.tab !== 'calendar') content.scrollTop = homeScroll;
@@ -1030,6 +1109,7 @@
     overlay.hidden = false;
     app.inert = true;
     document.body.classList.add('sheet-open');
+    enhanceSelects(sheet);
     requestAnimationFrame(() => {
       const first = sheet.querySelector('textarea, input:not([type="checkbox"]):not([type="range"]), button:not(.close-button)');
       first?.focus({ preventScroll: true });
@@ -1106,6 +1186,7 @@
       warnings: [],
       showOnHome: true,
       showInTasks: false,
+      urgent: false,
       ...overrides
     };
   }
@@ -1126,6 +1207,7 @@
       source: String(draft.source || '').slice(0, 20000),
       showOnHome: draft.showOnHome !== false,
       showInTasks: draft.showInTasks === true,
+      urgent: draft.urgent === true,
       repeat: draft.repeat || null,
       until: draft.repeat?.until || null,
       completedDates: [],
@@ -1321,22 +1403,20 @@
     if (speechReturnToInput) cleanupSpeech();
     const config = speechConfig();
     showSheet(`<form id="speechApiForm" novalidate>
-      ${sheetHeader('语音识别 API', '支持 OpenAI / Whisper 兼容的音频转写接口', '<button type="submit" class="primary-button sheet-save">保存</button>')}
+      ${sheetHeader('语音识别 API', '', '<button type="submit" class="primary-button sheet-save">保存</button>')}
       <div class="sheet-body">
         <label class="field-label" for="speech-endpoint">完整转写接口地址</label>
         <input id="speech-endpoint" name="endpoint" type="url" class="text-input" value="${escape(config.endpoint)}" placeholder="https://你的服务/v1/audio/transcriptions" autocomplete="off" autocapitalize="none" spellcheck="false">
-        <p class="helper-note">填写服务商提供的完整 HTTPS 地址。音频通过 multipart/form-data 上传，响应需包含 text 字段。</p>
-        <label class="field-label" for="speech-key">API Key <span class="optional-mark">${config.hasKey ? '已加密保存，留空保留' : '无鉴权服务可留空'}</span></label>
+        <label class="field-label" for="speech-key">API Key </label>
         <input id="speech-key" name="key" type="password" class="text-input" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="${config.hasKey ? '留空保留语音服务的 Key' : '填写语音服务的 Key'}">
         <label class="field-label" for="speech-model"><span>语音识别模型</span><button type="button" class="text-button" data-action="speech-models">获取模型</button></label>
         <input id="speech-model" name="model" class="text-input" list="speech-model-list" value="${escape(config.model || 'whisper-1')}" placeholder="如 whisper-1 或服务商提供的语音模型" autocomplete="off" spellcheck="false">
         <datalist id="speech-model-list"></datalist>
-        <p class="helper-note" id="speechModelsNote">有模型列表时可从列表选；不提供列表的服务可填写模型名。文本模型通常不能直接识别音频。</p>
+        <p id="speechModelsNote" class="config-status" role="status"></p>
         <label class="field-label" for="speech-language">识别语言</label>
         <select id="speech-language" name="language" class="select-input">${[['zh','中文'],['','自动识别'],['en','英语']].map(([value,label]) => `<option value="${value}" ${config.language === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
-        ${config.hasKey ? '<label class="switch-row"><span class="switch-copy"><strong>删除语音服务的 Key</strong><small>不影响现有日程解析接口</small></span><input class="switch-control" type="checkbox" name="removeKey"></label>' : ''}
+        ${config.hasKey ? '<label class="switch-row"><span class="switch-copy"><strong>删除语音服务的 Key</strong></span><input class="switch-control" type="checkbox" name="removeKey"></label>' : ''}
         <p id="speechConfigError" class="form-error" role="alert" hidden></p>
-        <p class="helper-note">此配置与 MiniMax 日程解析接口分别保存，Key 不进入日程备份。转写按你选择的语音服务计费。</p>
       </div></form>`, 'speech-config');
   }
   function speechFormData() {
@@ -1400,6 +1480,10 @@
           <legend class="field-label">显示位置</legend>
           <label><input type="checkbox" name="showOnHome-${i}" ${draft.showOnHome !== false ? 'checked' : ''}>接下来</label>
           <label><input type="checkbox" name="showInTasks-${i}" ${draft.showInTasks === true ? 'checked' : ''}>待办</label>
+        </fieldset>
+        <fieldset class="priority-fields">
+          <legend class="field-label">优先级</legend>
+          <label class="urgent-option"><input type="checkbox" name="urgent-${i}" ${draft.urgent === true ? 'checked' : ''}>紧急置顶</label>
         </fieldset>
         <label class="switch-row" style="padding-left:0;padding-right:0;min-height:0;margin-top:var(--s4)">
           <span class="switch-copy"><strong>全天事项</strong><small>没有具体时段，只在日期上标记</small></span>
@@ -1522,6 +1606,7 @@
       draft.allDay = data.has(`allDay-${i}`);
       draft.showOnHome = data.has(`showOnHome-${i}`);
       draft.showInTasks = data.has(`showInTasks-${i}`);
+      draft.urgent = data.has(`urgent-${i}`);
       draft.location = String(data.get(`location-${i}`) || '').trim();
       draft.note = String(data.get(`note-${i}`) || '').trim();
       draft.start = draft.allDay ? '' : String(data.get(`start-${i}`) || '');
@@ -1661,6 +1746,7 @@
         <div class="detail-hero">
           <span class="chip" style="background:${isDark() ? c.darkBg : c.bg};color:${isDark() ? c.darkFg : c.fg}">${escape(c.name)}</span>
           <span class="chip">${kind}</span>
+          ${event.urgent ? `<span class="chip danger">${icon('alert')}紧急置顶</span>` : ''}
           ${event.repeat ? `<span class="chip accent">${icon('repeat')}${escape(repeatSummary(event) || '重复')}</span>` : ''}
           ${event.done ? `<span class="chip ok">${icon('check')}已完成</span>` : ''}
         </div>
@@ -1671,6 +1757,7 @@
           <div class="detail-item">${icon('clock')}<div><span>${event.start ? '结束时间' : '截止时间'}</span><strong>${event.allDay ? '全天' : dueClock(event)}</strong></div></div>
           ${event.location ? `<div class="detail-item">${icon('pin')}<div><span>地点</span><strong>${escape(event.location)}</strong></div></div>` : ''}
           ${event.note ? `<div class="detail-item">${icon('note')}<div><span>备注</span><strong>${escape(event.note)}</strong></div></div>` : ''}
+          ${event.urgent ? `<div class="detail-item">${icon('alert')}<div><span>优先级</span><strong>紧急，已置顶</strong></div></div>` : ''}
           ${event.repeat ? `<div class="detail-item">${icon('repeat')}<div><span>重复规则</span><strong>${escape(repeatSummary(event) || '重复')}</strong></div></div>` : ''}
         </div>
         ${event.source ? `<div class="detail-source"><span class="field-label">原始信息</span><p>${escape(event.source)}</p></div>` : ''}
@@ -1701,7 +1788,7 @@
     describe(action) {
       const event = state.events.find(e => e.id === action.id);
       if (!event) throw new Error('这项安排已不存在，请重新查询');
-      return {title:event.title, due:event.due, repeat:!!event.repeat};
+      return {title:event.title, due:event.due, repeat:!!event.repeat, urgent:event.urgent === true};
     },
     prepare(action) {
       if (action.type === 'add') {
@@ -1736,7 +1823,7 @@
       if (explicit && validDay(explicit[0])) { from=atDay(explicit[0]); to=addDays(from,1); }
       const rows=occurrences(from,new Date(to.getTime()-1));
       const context=rows.slice(0,60).map(e=>({id:e.id,title:e.title.slice(0,100),due:e.due,start:e.start,
-        occurrenceDate:e.occurrenceDate || e.due.slice(0,10),done:e.done,location:e.location?.slice(0,100),note:e.note?.slice(0,120)}));
+        occurrenceDate:e.occurrenceDate || e.due.slice(0,10),done:e.done,urgent:e.urgent === true,location:e.location?.slice(0,100),note:e.note?.slice(0,120)}));
       return {context,contextRange:`${dateKey(from)} 至 ${dateKey(new Date(to.getTime()-1))}，最多60项，截断：${rows.length>60}`};
     }
   };
@@ -1829,6 +1916,7 @@
       warnings: [],
       showOnHome: shownOnHome(item),
       showInTasks: shownInTasks(item),
+      urgent: item.urgent === true,
       occurrenceDate: moment || item.occurrenceDate
     }];
     renderDrafts();
@@ -1858,7 +1946,7 @@
 
   function showApiConfig() {
     const config = apiConfig();
-    showSheet(`${sheetHeader('AI 识别接口', '填入 Key，获取模型，再从列表选择')}
+    showSheet(`${sheetHeader('AI 识别接口', '')}
       <form id="apiForm" novalidate>
         <div class="sheet-body">
           <label class="field-label" for="api-region">API 服务</label>
@@ -1871,10 +1959,9 @@
           <label class="field-label" for="api-base-url">API 地址</label>
           <input id="api-base-url" name="baseUrl" class="text-input" type="url" value="${escape(config.baseUrl || 'https://api.minimax.cn/v1')}"
             placeholder="https://你的服务地址/v1" autocomplete="off" autocapitalize="none" spellcheck="false">
-          <p class="helper-note">支持 HTTPS 的 OpenAI 兼容服务，可包含 /v1 等路径。识别图片需要支持视觉的模型。</p>
 
           <label class="field-label" for="api-key">
-            <span>API Key</span>${config.hasKey ? '<span class="optional-mark">已保存</span>' : '<span class="required-mark">*</span>'}
+            <span>API Key</span>${config.hasKey ? '' : '<span class="required-mark">*</span>'}
           </label>
           <input id="api-key" name="key" class="text-input" type="password"
             placeholder="${config.hasKey ? '留空保留已有 Key' : '在手机上粘贴 API Key'}" autocomplete="off" autocapitalize="none" spellcheck="false">
@@ -1887,10 +1974,10 @@
             <option value="">${config.model ? '请选择模型' : '先填 Key，再点「获取模型」'}</option>
             ${config.model ? `<option value="${escape(config.model)}" selected>${escape(config.model)}（已保存）</option>` : ''}
           </select>
-          <p id="apiModelsNote" class="helper-note" role="status">列表来自 API 服务；能否调用以测试结果为准。</p>
+          <p id="apiModelsNote" class="config-status" role="status"></p>
 
           ${config.hasKey ? `<label class="switch-row" style="padding-left:0;padding-right:0;margin-top:var(--s4);border-bottom:0">
-            <span class="switch-copy"><strong>删除已保存的 Key</strong><small>密钥仅在本机加密保存</small></span>
+            <span class="switch-copy"><strong>删除已保存的 Key</strong></span>
             <input class="switch-control" type="checkbox" name="removeKey">
           </label>` : ''}
           <p class="form-error" id="apiError" role="alert" hidden></p>
@@ -2038,6 +2125,7 @@
         source: String(source || '').slice(0, 20000),
         showOnHome: true,
         showInTasks: false,
+        urgent: item.urgent === true || item.priority === 'urgent',
         warnings
       };
     });
@@ -2181,7 +2269,19 @@
       case 'repeat-help': showRepeatHelp(); break;
       case 'api-info': showApiConfig(); break;
       case 'storage-info': showStorageInfo(); break;
+      case 'check-update': checkUpdate(); break;
+      case 'download-update': downloadUpdate(target); break;
       case 'about': showAbout(); break;
+      case 'toggle-license': {
+        const panel = document.getElementById('licenseDisclosure');
+        const toggle = document.getElementById('licenseToggle');
+        if (panel && toggle) {
+          const open = panel.dataset.open !== 'true';
+          panel.dataset.open = String(open);
+          toggle.setAttribute('aria-expanded', String(open));
+        }
+        break;
+      }
       case 'load-sample': loadSample(); break;
       case 'confirm-sample': confirmSample(); break;
       case 'import-ics': importIcs(); break;
@@ -2461,24 +2561,59 @@
   function showStorageInfo() {
     showSheet(`${sheetHeader('本机保存', '')}
       <div class="sheet-body">
-        <p class="helper-note">日程、重复规则与完成记录保存在手机的本地数据库里，离线也能查看和修改。</p>
-        <p class="helper-note">备份包含日程、原文、颜色、重复规则和每次完成记录。<strong>不包含 API Key</strong>，恢复时也不会覆盖当前手机的 API 配置与外观设置。</p>
-        <p class="helper-note">系统自动备份已关闭，建议定期手动导出。</p>
       </div>
       <div class="sheet-footer"><button class="primary-button" data-action="export-backup">导出一份备份</button></div>`, 'info');
+  }
+
+  function checkUpdate() {
+    showSheet(`${sheetHeader('检查更新', '')}
+      <div class="sheet-body"><div id="updateResult" class="update-result"><p class="helper-note">正在连接 GitHub 检查最新版本…</p></div></div>
+      <div class="sheet-footer"><button class="primary-button" data-action="close-sheet">关闭</button></div>`, 'update');
+    nativeRequest(id => call('checkForUpdate', id), result => {
+      const output = document.getElementById('updateResult');
+      if (!output) return;
+      if (!result.ok) { output.innerHTML = `<p class="form-error">${escape(result.error)}</p>`; return; }
+      const data = result.data || {};
+      if (!data.available) {
+        output.innerHTML = `<p class="helper-note">当前已经是最新版本 ${escape(data.current || '')}。</p>`;
+        return;
+      }
+      output.innerHTML = `<p><strong>发现新版本 ${escape(data.latest || '')}</strong></p><p class="helper-note">当前版本：${escape(data.current || '')}${data.notes ? `<br>${escape(data.notes)}` : ''}</p><button type="button" class="primary-button" data-action="download-update">下载并安装</button>`;
+      output.querySelector('[data-action="download-update"]').dataset.url = data.url || '';
+    });
+  }
+
+  function downloadUpdate(button) {
+    const output = document.getElementById('updateResult');
+    button.disabled = true;
+    button.textContent = '正在下载更新…';
+    nativeRequest(id => call('downloadUpdate', id, button.dataset.url || ''), result => {
+      if (!result.ok) {
+        button.disabled = false;
+        button.textContent = '重试下载并安装';
+        if (output) output.insertAdjacentHTML('beforeend', `<p class="form-error">${escape(result.error)}</p>`);
+        return;
+      }
+      if (result.data?.permissionRequired) {
+        button.disabled = false;
+        button.textContent = '返回后再次安装';
+        if (output) output.insertAdjacentHTML('beforeend', '<p class="helper-note">请允许云朵安装未知来源应用，返回后再次点击安装。</p>');
+      } else {
+        button.textContent = '安装程序已打开';
+        if (output) output.insertAdjacentHTML('beforeend', '<p class="helper-note">系统安装页面已打开，请确认安装。</p>');
+      }
+    });
   }
 
   function showAbout() {
     let license = '';
     try { license = call('license'); } catch (_) { }
-    showSheet(`${sheetHeader('关于云朵', '0.4.0 · 个人安卓版')}
+    showSheet(`${sheetHeader('关于云朵', '')}
       <div class="sheet-body">
-        <p class="helper-note">基于 Fossify Calendar 二次开发，使用其本地数据库、重复规则引擎与 ICS 导入。</p>
-        <p class="helper-note">日程识别的原文与图片会发送到你自己填写的 API 地址。应用没有自建转发服务器，密钥使用 Android Keystore 加密后单独保存，不写入日志、不进入备份。</p>
-        <details style="margin-top:var(--s4)">
-          <summary class="text-button" style="cursor:pointer">查看 GPL-3.0 许可证</summary>
-          <pre style="white-space:pre-wrap;word-break:break-word;font-size:10px;line-height:1.6;color:var(--ink-3);max-height:240px;overflow:auto;margin-top:var(--s3)">${escape(license.slice(0, 20000))}</pre>
-        </details>
+        <div class="license-disclosure" id="licenseDisclosure" data-open="false">
+          <button type="button" class="text-button license-toggle" id="licenseToggle" data-action="toggle-license" aria-expanded="false" aria-controls="licenseBody"><span class="license-chevron" aria-hidden="true"></span><span>查看 GPL-3.0 许可证</span></button>
+          <div class="license-clip" id="licenseBody"><pre class="license-body">${escape(license.slice(0, 20000))}</pre></div>
+        </div>
       </div>
       <div class="sheet-footer"><button class="primary-button" data-action="close-sheet">完成</button></div>`, 'info');
   }

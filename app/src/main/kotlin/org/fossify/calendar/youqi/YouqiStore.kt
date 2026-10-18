@@ -267,6 +267,9 @@ class YouqiStore(private val activity: Context) {
             // Null keeps existing records on automatic visibility; booleans are user choices.
             put("showOnHome", (meta?.opt("showOnHome") as? Boolean) ?: JSONObject.NULL)
             put("showInTasks", (meta?.opt("showInTasks") as? Boolean) ?: JSONObject.NULL)
+            // Urgent is UI metadata so it survives Room round-trips without changing
+            // Fossify's Event schema. The web UI uses it only for local prioritization.
+            put("urgent", meta?.optBoolean("urgent", false) ?: false)
             // Events imported from an ICS file may carry rules this interface cannot express.
             // Marking them lets a re-save restore the original numeric fields untouched.
             put("nativeRepeat", imported)
