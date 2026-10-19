@@ -419,11 +419,14 @@ class YouqiActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateConnection(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+    private fun updateConnection(
+        url: String,
+        accept: String = "application/vnd.github+json"
+    ): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
         connectTimeout = 15_000
         readTimeout = 30_000
         instanceFollowRedirects = true
-        setRequestProperty("Accept", "application/vnd.github+json")
+        setRequestProperty("Accept", accept)
         setRequestProperty("User-Agent", "Yunduo/${org.fossify.calendar.BuildConfig.VERSION_NAME}")
     }
 
@@ -440,18 +443,24 @@ class YouqiActivity : AppCompatActivity() {
         networkExecutor.execute {
             try {
                 val connection = updateConnection("https://api.github.com/repos/1qiuyu/youqi-android/releases/latest")
+                connection.connect()
+                require(connection.responseCode in 200..299) { "检查更新失败（HTTP ${connection.responseCode}）" }
                 val body = connection.inputStream.bufferedReader().use { it.readText() }
                 connection.disconnect()
                 val release = JSONObject(body)
                 val tag = release.optString("tag_name").takeIf { it.isNotBlank() } ?: error("发布版本缺少版本号")
                 val assets = release.optJSONArray("assets") ?: org.json.JSONArray()
                 var apkUrl = ""
+                var apkApiUrl = ""
                 var apkName = ""
                 for (index in 0 until assets.length()) {
                     val asset = assets.optJSONObject(index) ?: continue
                     val name = asset.optString("name")
                     if (name.endsWith(".apk", ignoreCase = true)) {
-                        apkName = name; apkUrl = asset.optString("browser_download_url"); break
+                        apkName = name
+                        apkUrl = asset.optString("browser_download_url")
+                        apkApiUrl = asset.optString("url")
+                        break
                     }
                 }
                 require(apkUrl.startsWith("https://github.com/") || apkUrl.startsWith("https://objects.githubusercontent.com/")) { "发布中没有可安装的 APK" }
@@ -460,9 +469,11 @@ class YouqiActivity : AppCompatActivity() {
                     .put("current", current)
                     .put("latest", tag.removePrefix("v"))
                     .put("available", compareVersions(tag, current) > 0)
-                    .put("url", apkUrl)
+                    // The asset API endpoint negotiates a binary response and avoids
+                    // browser-download redirects that can stall on some networks.
+                    .put("url", apkApiUrl.takeIf { it.startsWith("https://api.github.com/") } ?: apkUrl)
                     .put("name", apkName)
-                    .put("notes", release.optString("body").take(2000)))
+                )
             } catch (error: Exception) { send(id, error = errorMessage(error)) }
         }
     }
@@ -471,11 +482,19 @@ class YouqiActivity : AppCompatActivity() {
         networkExecutor.execute {
             try {
                 val parsed = URL(rawUrl)
-                require(parsed.protocol == "https" && (parsed.host == "github.com" || parsed.host.endsWith(".githubusercontent.com"))) { "更新地址不受信任" }
-                val connection = updateConnection(rawUrl)
+                require(parsed.protocol == "https" && (
+                    parsed.host == "api.github.com" ||
+                        parsed.host == "github.com" ||
+                        parsed.host.endsWith(".githubusercontent.com")
+                    )) { "更新地址不受信任" }
+                val connection = updateConnection(rawUrl, "application/octet-stream")
                 connection.connect()
                 require(connection.responseCode in 200..299) { "下载更新失败（HTTP ${connection.responseCode}）" }
-                require(connection.url.host == "github.com" || connection.url.host.endsWith(".githubusercontent.com")) { "更新跳转地址不受信任" }
+                require(
+                    connection.url.host == "api.github.com" ||
+                        connection.url.host == "github.com" ||
+                        connection.url.host.endsWith(".githubusercontent.com")
+                ) { "更新跳转地址不受信任" }
                 val length = connection.contentLengthLong
                 require(length <= 120L * 1024 * 1024 || length < 0) { "更新包过大，已停止下载" }
                 val temporary = File(cacheDir, "yunduo-update.apk.part")

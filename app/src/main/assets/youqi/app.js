@@ -2664,7 +2664,7 @@
         output.innerHTML = `<p class="helper-note">当前已经是最新版本 ${escape(data.current || '')}。</p>`;
         return;
       }
-      output.innerHTML = `<p><strong>发现新版本 ${escape(data.latest || '')}</strong></p><p class="helper-note">当前版本：${escape(data.current || '')}${data.notes ? `<br>${escape(data.notes)}` : ''}</p><button type="button" class="primary-button" data-action="download-update">下载并安装</button>`;
+      output.innerHTML = `<p><strong>发现新版本 ${escape(data.latest || '')}</strong></p><p class="helper-note">当前版本：${escape(data.current || '')}</p><button type="button" class="primary-button" data-action="download-update">下载并安装</button>`;
       output.querySelector('[data-action="download-update"]').dataset.url = data.url || '';
     });
   }

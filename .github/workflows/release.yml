@@ -43,4 +43,4 @@ jobs:
           test -n "$APK"
           gh release create "$GITHUB_REF_NAME" "$APK" \
             --title "云朵 $VERSION" \
-            --generate-notes
+            --notes ""
