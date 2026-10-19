@@ -1196,6 +1196,7 @@
     });
   }
   function closeSheet() {
+    closePicker();
     if (sheetMode === 'voice-input') cleanupSpeech();
     if (document.getElementById('noticeInput')) noticeText = document.getElementById('noticeInput').value;
     overlay.hidden = true;
