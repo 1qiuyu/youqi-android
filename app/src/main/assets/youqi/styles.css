@@ -1459,6 +1459,71 @@ textarea.text-input {
 .text-input.warning-input { border-color: var(--warn); }
 .text-input:disabled { background: var(--surface-2); color: var(--ink-3); }
 
+/* In-app calendar/time picker. This deliberately replaces the platform
+   picker popup so date selection feels like part of 云朵 instead of Android. */
+.picker-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  text-align: left;
+  cursor: pointer;
+}
+.picker-field svg { width: 18px; height: 18px; color: var(--accent-ink); }
+.picker-field:hover { border-color: var(--accent); background: var(--accent-soft); }
+.picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: var(--s5);
+  background: rgb(var(--scrim-color) / .62);
+  backdrop-filter: blur(8px);
+  animation: fade var(--fast) var(--ease);
+}
+.picker-dialog {
+  width: min(100%, 430px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--elev-2);
+  animation: picker-rise var(--slow) var(--ease);
+}
+@keyframes picker-rise { from { transform: translateY(12px) scale(.98); opacity: .5; } }
+.picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s5) var(--s5) var(--s3);
+  background: linear-gradient(135deg, var(--accent-soft), var(--surface));
+}
+.picker-header > div { display: grid; gap: 4px; min-width: 0; }
+.picker-kicker { color: var(--accent-ink); font-size: var(--t-caption); letter-spacing: .08em; }
+.picker-header strong { font-size: 20px; font-weight: 650; letter-spacing: -.3px; }
+.picker-month { display: flex; align-items: center; justify-content: space-between; padding: var(--s4) var(--s5) var(--s2); }
+.picker-month strong { font-size: 16px; color: var(--ink); }
+.picker-nav { display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--r-full); color: var(--accent-ink); transition: background var(--fast) var(--ease), transform var(--fast) var(--ease); }
+.picker-nav:hover { background: var(--accent-soft); transform: scale(1.06); }
+.picker-nav svg { width: 20px; height: 20px; }
+.picker-weekdays, .picker-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: 0 var(--s5); }
+.picker-weekdays { padding-top: var(--s2); padding-bottom: var(--s2); color: var(--ink-3); font-size: var(--t-caption); text-align: center; }
+.picker-day { display: grid; place-items: center; min-height: 42px; border-radius: 13px; color: var(--ink); font-family: var(--num); font-size: 15px; transition: background var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--fast) var(--ease); }
+.picker-day:not(.empty):hover { background: var(--accent-soft); color: var(--accent-ink); transform: translateY(-1px); }
+.picker-day.selected { background: var(--accent); color: var(--on-accent); font-weight: 650; box-shadow: 0 5px 12px color-mix(in srgb, var(--accent) 30%, transparent); }
+.picker-day.empty { pointer-events: none; }
+.picker-time { display: flex; align-items: center; justify-content: center; gap: var(--s2); margin: var(--s4) var(--s5) 0; padding: var(--s3); border-radius: var(--r-md); background: var(--surface-2); color: var(--ink-2); }
+.picker-time > span { margin-right: var(--s2); font-size: var(--t-label); }
+.picker-time label { display: flex; align-items: center; gap: 4px; color: var(--ink-2); font-size: var(--t-label); }
+.picker-time input { width: 48px; min-height: 38px; border: 1px solid var(--line-strong); border-radius: var(--r-xs); background: var(--surface); color: var(--ink); text-align: center; font: 600 16px var(--num); }
+.picker-time input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.picker-time b { color: var(--accent-ink); }
+.picker-footer { display: flex; gap: var(--s3); padding: var(--s5); }
+.picker-footer > * { flex: 1; }
+
 textarea.text-input {
   min-height: 132px;
   resize: none;

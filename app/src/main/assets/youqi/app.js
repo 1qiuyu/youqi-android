@@ -180,6 +180,86 @@
   const validISO = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && !Number.isNaN(new Date(value).getTime()) && localISO(new Date(value)) === value;
   const validDay = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 
+  /* The WebView date inputs used to open Android's stock pickers. Keep the
+     values form-compatible, but render a small in-app calendar so every
+     picker follows the same 云朵 surface, typography and motion. */
+  let activePicker = null;
+  const pickerDate = value => {
+    const raw = String(value || '');
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate());
+  };
+  const pickerValue = (date, hour, minute, kind) => {
+    const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    return kind === 'datetime' ? `${day}T${pad(hour)}:${pad(minute)}` : day;
+  };
+  const pickerLabel = (value, kind) => {
+    const date = pickerDate(value);
+    const label = `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${WEEKDAY_FULL[date.getDay()]}`;
+    if (kind !== 'datetime') return label;
+    const match = String(value || '').match(/T(\d{2}):(\d{2})/);
+    return `${label} ${match ? `${match[1]}:${match[2]}` : '12:00'}`;
+  };
+  function pickerField(id, value, kind = 'date', required = false) {
+    const raw = String(value || '');
+    return `<button type="button" class="text-input picker-field" id="${id}" value="${escape(raw)}" data-action="open-picker" data-picker-kind="${kind}" data-picker-value="${escape(raw)}" aria-haspopup="dialog" aria-required="${required}"><span data-picker-label>${escape(pickerLabel(raw, kind))}</span>${icon('calendar')}</button>
+      <input type="hidden" id="${id}-value" name="${id}" value="${escape(raw)}"${required ? ' required' : ''}>`;
+  }
+  function closePicker() {
+    activePicker = null;
+    document.querySelector('.picker-backdrop')?.remove();
+  }
+  function renderPicker() {
+    if (!activePicker) return;
+    const p = activePicker;
+    const first = new Date(p.year, p.month, 1);
+    const offset = first.getDay();
+    const days = new Date(p.year, p.month + 1, 0).getDate();
+    const selected = pickerDate(p.value);
+    const cells = [];
+    for (let i = 0; i < offset; i++) cells.push('<span class="picker-day empty"></span>');
+    for (let day = 1; day <= days; day++) {
+      const selectedDay = selected.getFullYear() === p.year && selected.getMonth() === p.month && selected.getDate() === day;
+      cells.push(`<button type="button" class="picker-day ${selectedDay ? 'selected' : ''}" data-action="picker-day" data-day="${day}">${day}</button>`);
+    }
+    const hour = pad(p.hour);
+    const minute = pad(p.minute);
+    const time = p.kind === 'datetime' ? `<div class="picker-time"><span>时间</span><label><input inputmode="numeric" maxlength="2" data-picker-part="hour" value="${hour}">时</label><b>:</b><label><input inputmode="numeric" maxlength="2" data-picker-part="minute" value="${minute}">分</label></div>` : '';
+    const html = `<div class="picker-backdrop" role="presentation"><section class="picker-dialog" role="dialog" aria-modal="true" aria-label="选择${p.kind === 'datetime' ? '日期和时间' : '日期'}">
+      <header class="picker-header"><div><span class="picker-kicker">云朵 · ${p.kind === 'datetime' ? '时间安排' : '日期选择'}</span><strong>${escape(pickerLabel(p.value, p.kind))}</strong></div><button type="button" class="close-button" data-action="close-picker" aria-label="关闭">${icon('close')}</button></header>
+      <div class="picker-month"><button type="button" class="picker-nav" data-action="picker-prev" aria-label="上个月">${icon('left')}</button><strong>${p.year}年 ${p.month + 1}月</strong><button type="button" class="picker-nav" data-action="picker-next" aria-label="下个月">${icon('right')}</button></div>
+      <div class="picker-weekdays">${WEEKDAYS.map(day => `<span>${day}</span>`).join('')}</div><div class="picker-grid">${cells.join('')}</div>${time}
+      <footer class="picker-footer"><button type="button" class="secondary-button" data-action="close-picker">取消</button><button type="button" class="primary-button" data-action="confirm-picker">确定</button></footer>
+    </section></div>`;
+    document.querySelector('.picker-backdrop')?.remove();
+    document.body.insertAdjacentHTML('beforeend', html);
+    document.querySelectorAll('.picker-time input').forEach(input => input.addEventListener('input', () => {
+      const value = clamp(Number(input.value) || 0, input.dataset.pickerPart === 'hour' ? 0 : 0, input.dataset.pickerPart === 'hour' ? 23 : 59);
+      p[input.dataset.pickerPart] = value;
+      input.value = pad(value);
+    }));
+  }
+  function openPicker(target) {
+    const kind = target.dataset.pickerKind || 'date';
+    const value = target.value || target.dataset.pickerValue || '';
+    const date = pickerDate(value);
+    const match = String(value).match(/T(\d{2}):(\d{2})/);
+    activePicker = { targetId: target.id, kind, value, year: date.getFullYear(), month: date.getMonth(), day: date.getDate(), hour: match ? Number(match[1]) : 12, minute: match ? Number(match[2]) : 0 };
+    renderPicker();
+  }
+  function commitPicker() {
+    if (!activePicker) return;
+    const p = activePicker;
+    const date = new Date(p.year, p.month, p.day || 1);
+    const value = pickerValue(date, p.hour, p.minute, p.kind);
+    const target = document.getElementById(p.targetId);
+    const hidden = document.getElementById(`${p.targetId}-value`);
+    if (target) { target.value = value; target.dataset.pickerValue = value; const label = target.querySelector('[data-picker-label]'); if (label) label.textContent = pickerLabel(value, p.kind); }
+    if (hidden) hidden.value = value;
+    closePicker();
+  }
+
   const dateLabel = value => { const d = new Date(value); return `${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAY_FULL[d.getDay()]}`; };
   const relDay = value => {
     const key = dateKey(value);
@@ -1241,7 +1321,7 @@
       <div class="sheet-body">
         ${inputTabs(tab)}
         <label class="field-label" for="messageDate">原文 / 截图对应日期 <span class="required-mark">*</span></label>
-        <input class="text-input" id="messageDate" type="date" value="${messageDate}">
+        ${pickerField('messageDate', messageDate, 'date', true)}
         <p class="helper-note">相对日期（“明天”“下周三”）以这一天为基准计算。</p>
         ${tab === 'text' ? `
           <label class="field-label" for="noticeInput">
@@ -1336,7 +1416,7 @@
         <label class="field-label" for="noticeInput">识别文字 <span class="optional-mark">可修改后再提取日程</span></label>
         <textarea class="text-input" id="noticeInput" maxlength="20000" placeholder="语音识别完成后，文字会显示在这里。" ${voice.phase !== 'idle' ? 'disabled' : ''}>${escape(voice.text)}</textarea>
         <label class="field-label" for="messageDate">说话内容对应日期</label>
-        <input class="text-input" id="messageDate" type="date" value="${messageDate}">
+        ${pickerField('messageDate', messageDate, 'date', true)}
         <p class="helper-note">“明天”“下周三”以这一天为准。点击“转为文字”才会把音频发给你的语音服务；提取日程使用现有 AI 接口。</p>
         ${!llmReady ? '<p class="helper-note">还需在设置中配置日程解析 AI，才能从文字提取日程。</p>' : ''}
       </div>
@@ -1493,13 +1573,11 @@
         <div class="time-fields" style="margin-top:var(--s3)">
           <div>
             <label class="field-label" for="due-${i}">${draft.allDay ? '日期' : '截止时间'} <span class="required-mark">*</span></label>
-            <input class="text-input ${draft.warnings.length ? 'warning-input' : ''}" id="due-${i}" name="due-${i}"
-              type="${draft.allDay ? 'date' : 'datetime-local'}"
-              value="${escape(draft.allDay ? (draft.due || '').slice(0, 10) : draft.due)}" required>
+            ${pickerField(`due-${i}`, draft.allDay ? (draft.due || '').slice(0, 10) : draft.due, draft.allDay ? 'date' : 'datetime', true)}
           </div>
           <div ${draft.allDay ? 'hidden' : ''} data-start-wrap="${i}">
             <label class="field-label" for="start-${i}">开始时间 <span class="optional-mark">选填</span></label>
-            <input class="text-input" id="start-${i}" name="start-${i}" type="datetime-local" value="${escape(draft.start)}">
+            ${pickerField(`start-${i}`, draft.start, 'datetime')}
           </div>
         </div>
         ${draft.warnings.length ? `<div class="field-warning">${icon('alert')}<span>${draft.warnings.map(escape).join(' ')}</span></div>` : ''}
@@ -1589,7 +1667,7 @@
         </div>
         <div>
           <label class="field-label" for="until-${i}">结束日期 <span class="optional-mark">选填</span></label>
-          <input class="text-input" id="until-${i}" name="until-${i}" type="date" value="${escape(untilValue)}">
+          ${pickerField(`until-${i}`, untilValue, 'date')}
         </div>
       </div>`;
   }
@@ -2175,6 +2253,12 @@
       case 'open-add': openAdd(); break;
       case 'reload': try { reload(); } catch (e) { toast(e.message); } render(); break;
       case 'close-sheet': closeSheet(); break;
+      case 'open-picker': openPicker(target); break;
+      case 'close-picker': closePicker(); break;
+      case 'picker-prev': if (activePicker) { activePicker.month--; if (activePicker.month < 0) { activePicker.month = 11; activePicker.year--; } activePicker.day = Math.min(activePicker.day, new Date(activePicker.year, activePicker.month + 1, 0).getDate()); activePicker.value = pickerValue(new Date(activePicker.year, activePicker.month, activePicker.day), activePicker.hour, activePicker.minute, activePicker.kind); renderPicker(); } break;
+      case 'picker-next': if (activePicker) { activePicker.month++; if (activePicker.month > 11) { activePicker.month = 0; activePicker.year++; } activePicker.day = Math.min(activePicker.day, new Date(activePicker.year, activePicker.month + 1, 0).getDate()); activePicker.value = pickerValue(new Date(activePicker.year, activePicker.month, activePicker.day), activePicker.hour, activePicker.minute, activePicker.kind); renderPicker(); } break;
+      case 'picker-day': if (activePicker) { activePicker.day = Number(target.dataset.day); activePicker.value = pickerValue(new Date(activePicker.year, activePicker.month, activePicker.day), activePicker.hour, activePicker.minute, activePicker.kind); renderPicker(); } break;
+      case 'confirm-picker': commitPicker(); break;
       case 'today': calendarFraction = 0; state.week = dateKey(monday(NOW)); state.selected = dateKey(NOW); render(); break;
       case 'prev-week': changeWeek(-1); break;
       case 'next-week': changeWeek(1); break;
@@ -2295,6 +2379,7 @@
   }
 
   document.addEventListener('click', event => {
+    if (event.target.classList?.contains('picker-backdrop')) { closePicker(); return; }
     const target = event.target.closest('[data-action], [data-tab]');
     if (!target) { if (event.target === overlay) closeSheet(); return; }
     if (target.dataset.tab && !target.dataset.action) { state.tab = target.dataset.tab; render(); return; }
@@ -2403,7 +2488,7 @@
     showSheet(`${sheetHeader('跳转到日期', '')}
       <div class="sheet-body">
         <label class="field-label" for="jumpInput">选择日期</label>
-        <input class="text-input" id="jumpInput" type="date" value="${state.selected}">
+        ${pickerField('jumpInput', state.selected, 'date', true)}
         <p class="helper-note">跳转后，时间表会显示该日期所在的那一周。</p>
       </div>
       <div class="sheet-footer">
