@@ -2216,7 +2216,12 @@
     const id = uid();
     nativeRequests.set(id, handler);
     busy(true);
-    const wrapped = result => { busy(false); handler(result); };
+    const wrapped = result => {
+      // Download progress shares the request id but must not finish the request.
+      if (result?.ok && result.data?.progress) { handler(result); return; }
+      busy(false);
+      handler(result);
+    };
     nativeRequests.set(id, wrapped);
     try { start(id); } catch (error) {
       nativeRequests.delete(id);
@@ -2674,6 +2679,16 @@
     button.disabled = true;
     button.textContent = '正在下载更新…';
     nativeRequest(id => call('downloadUpdate', id, button.dataset.url || ''), result => {
+      if (result.ok && result.data?.progress) {
+        const downloaded = Number(result.data.downloaded) || 0;
+        const total = Number(result.data.total) || 0;
+        const percent = total > 0 ? Math.min(100, Math.round(downloaded * 100 / total)) : 0;
+        const formatSize = value => `${(value / 1048576).toFixed(1)} MB`;
+        button.textContent = total > 0
+          ? `正在下载 ${percent}%（${formatSize(downloaded)} / ${formatSize(total)}）`
+          : `正在下载（${formatSize(downloaded)}）`;
+        return;
+      }
       if (!result.ok) {
         button.disabled = false;
         button.textContent = '重试下载并安装';

@@ -504,12 +504,19 @@ class YouqiActivity : AppCompatActivity() {
                 require(length <= 120L * 1024 * 1024 || length < 0) { "更新包过大，已停止下载" }
                 val temporary = File(cacheDir, "yunduo-update.apk.part")
                 val target = File(cacheDir, "yunduo-update.apk")
+                var lastProgressAt = 0L
                 connection.inputStream.use { input -> java.io.FileOutputStream(temporary).use { output ->
                     val buffer = ByteArray(32 * 1024); var total = 0L
                     while (true) {
                         val count = input.read(buffer); if (count < 0) break
                         total += count; require(total <= 120L * 1024 * 1024) { "更新包过大，已停止下载" }
                         output.write(buffer, 0, count)
+                        // Surface progress while slow mobile connections are still making headway.
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - lastProgressAt >= 500L) {
+                            lastProgressAt = now
+                            send(id, JSONObject().put("progress", true).put("downloaded", total).put("total", length))
+                        }
                     }
                 } }
                 connection.disconnect()
