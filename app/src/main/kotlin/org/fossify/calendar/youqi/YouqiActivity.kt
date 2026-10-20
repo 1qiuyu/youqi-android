@@ -427,7 +427,12 @@ class YouqiActivity : AppCompatActivity() {
         readTimeout = 30_000
         instanceFollowRedirects = true
         setRequestProperty("Accept", accept)
-        setRequestProperty("User-Agent", "Yunduo/${org.fossify.calendar.BuildConfig.VERSION_NAME}")
+        // GitHub's release CDN heavily throttles custom app identifiers. A normal
+        // Android browser UA keeps the API request and APK stream responsive.
+        setRequestProperty(
+            "User-Agent",
+            "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
+        )
     }
 
     private fun versionParts(value: String): List<Int> = value.trim().removePrefix("v").split('.').map {
