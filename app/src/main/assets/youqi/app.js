@@ -2758,7 +2758,10 @@
       return;
     }
     const handler = nativeRequests.get(result.id);
-    if (handler) { nativeRequests.delete(result.id); handler(result); }
+    if (handler) {
+      if (!(result.ok && result.data?.progress)) nativeRequests.delete(result.id);
+      handler(result);
+    }
   };
 
   window.YouqiApp = {
