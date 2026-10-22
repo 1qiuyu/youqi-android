@@ -1,10 +1,14 @@
-# 云朵 0.4.0（原「有期」）
+# 云朵 0.4.12（原「有期」）
 
 独立维护的个人安卓日程与待办应用。源码、反馈及版本管理统一在 [1qiuyu/youqi-android](https://github.com/1qiuyu/youqi-android)。
 
 源码和版本发布统一在本仓库维护；GitHub Releases 提供 APK，应用内可从「设置 → 检查更新」下载并打开系统安装程序。
 
 许可证为 GNU GPL v3，原有代码的来源和版权说明见 [NOTICE.md](NOTICE.md)。
+
+## 0.4.12 · 背景配色适配
+
+自定义背景会按图片主色适配浅色与深色主题，只联动颜色，不改变布局、字号、间距或图标。不设置背景时保持原配色；透明度、模糊和遮罩仍由原有设置控制。
 
 ## 0.4.0 · 云朵管家与像素猫
 
@@ -60,9 +64,9 @@ sdk.dir=/你的/Android/sdk/路径
 ./gradlew :app:assembleFossDebug
 ```
 
-APK：`app/build/outputs/apk/foss/debug/youqi-9-foss-debug.apk`。
+APK：`app/build/outputs/apk/foss/debug/youqi-21-foss-debug.apk`。
 
-测试版包名 `com.youqi.calendar.debug`，独立于原 Fossify Calendar。版本名 0.4.0，版本号 9。测试版使用调试签名；同一台构建机保留签名密钥后可继续覆盖更新。
+测试版包名 `com.youqi.calendar.debug`，独立于原 Fossify Calendar。版本名 0.4.12，版本号 21。测试版使用调试签名；保留同一签名密钥后可继续覆盖更新。
 
 ## 验证
 
@@ -120,8 +124,7 @@ ANDROID_SERIAL=你的模拟器序号 ./gradlew :app:connectedFossDebugAndroidTes
 
 ## GitHub 源码与发布
 
-公开仓库：`1qiuyu/youqi-android`。推送 `v*` 标签会触发 `.github/workflows/release.yml`，构建并发布 Foss Debug APK；也可以从 Actions 页面手动运行。
-为保证手机能够覆盖安装，工作流使用仓库 Secret `YUNDUO_DEBUG_KEYSTORE_BASE64` 恢复稳定的调试签名。没有该 Secret 时仍可构建，但生成的 APK 不能覆盖另一台构建机的安装包。
+公开仓库：`1qiuyu/youqi-android`。GitHub Actions 关闭，不运行云端编译或发布；APK 在本机使用原有签名构建、测试后手动上传 GitHub Releases。签名密钥只保存在本机，不进入仓库。
 应用内更新只访问 GitHub API 和 GitHub Release APK，不会上传日程或 API 配置；首次安装更新时，安卓可能要求允许云朵安装未知来源应用。
 提交内容排除 API Key、签名私钥、手机日程数据库、机器路径配置、构建输出和缓存。
 

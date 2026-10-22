@@ -324,9 +324,157 @@
   const prefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
   const resolvedTheme = () => settings.theme === 'auto' ? (prefersDark() ? 'dark' : 'light') : settings.theme;
 
+  /* A photo does not need a separate hand-authored theme. A small colour sample
+     is enough to give the existing light/dark surfaces a matching hue while
+     keeping their contrast and spacing unchanged. */
+  const ADAPTIVE_DEFAULTS = {
+    'bg-light': '#F7F5FB', 'surface-light': '#FFFFFF', 'surface-2-light': '#F1EEF7', 'surface-3-light': '#E8E4F0',
+    'ink-light': '#1B1A22', 'ink-2-light': '#565265', 'ink-3-light': '#837E92', 'ink-4-light': '#A9A4B8',
+    'line-light': '#E6E2EE', 'line-strong-light': '#D5CFE1', 'accent-light': '#6A57AE',
+    'accent-hover-light': '#5A4897', 'on-accent-light': '#FFFFFF', 'accent-soft-light': '#EDE9F8',
+    'accent-ink-light': '#4B3A8C', 'focus-light': '#8A73D6',
+    'bg-dark': '#121116', 'surface-dark': '#1C1B22', 'surface-2-dark': '#24232B', 'surface-3-dark': '#2E2D36',
+    'ink-dark': '#ECEBF1', 'ink-2-dark': '#B0ACC0', 'ink-3-dark': '#837E93', 'ink-4-dark': '#625D72',
+    'line-dark': '#2C2B34', 'line-strong-dark': '#3B3A45', 'accent-dark': '#B7A4FF',
+    'accent-hover-dark': '#C7B8FF', 'on-accent-dark': '#1E1638', 'accent-soft-dark': '#262038',
+    'accent-ink-dark': '#CFC2FF', 'focus-dark': '#B7A4FF'
+  };
+  let backgroundPalette = null;
+  let analyzedBackgroundUrl = '';
+  let backgroundAnalysisToken = 0;
+
+  const clamp01 = value => Math.min(1, Math.max(0, value));
+  function hslToHex(hue, saturation, lightness) {
+    const h = ((hue % 360) + 360) % 360 / 360;
+    const s = clamp01(saturation);
+    const l = clamp01(lightness);
+    const chroma = (1 - Math.abs(2 * l - 1)) * s;
+    const x = chroma * (1 - Math.abs((h * 6) % 2 - 1));
+    const m = l - chroma / 2;
+    const part = h < 1 / 6 ? [chroma, x, 0] : h < 2 / 6 ? [x, chroma, 0]
+      : h < 3 / 6 ? [0, chroma, x] : h < 4 / 6 ? [0, x, chroma]
+        : h < 5 / 6 ? [x, 0, chroma] : [chroma, 0, x];
+    return `#${part.map(value => Math.round((value + m) * 255).toString(16).padStart(2, '0')).join('')}`;
+  }
+
+  function relativeLuminance(hex) {
+    const channels = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255)
+      .map(value => value <= .03928 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+    return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+  }
+
+  function readableOn(hex) {
+    const background = relativeLuminance(hex);
+    const lightContrast = 1.05 / (background + .05);
+    const dark = '#17131C';
+    const darkContrast = (background + .05) / (relativeLuminance(dark) + .05);
+    if (Math.max(lightContrast, darkContrast) < 4.5) return '#000000';
+    return lightContrast >= darkContrast ? '#FFFFFF' : dark;
+  }
+
+  function paletteForImage(hue, saturation) {
+    const h = ((hue % 360) + 360) % 360;
+    const s = Math.min(0.78, Math.max(0.34, saturation));
+    const lightAccent = hslToHex(h, s, .43);
+    const darkAccent = hslToHex(h, Math.max(s, .56), .76);
+    return {
+      'bg-light': hslToHex(h, s * .22, .975), 'surface-light': hslToHex(h, s * .14, .995),
+      'surface-2-light': hslToHex(h, s * .28, .955), 'surface-3-light': hslToHex(h, s * .26, .915),
+      'ink-light': hslToHex(h, s * .24, .13), 'ink-2-light': hslToHex(h, s * .24, .34),
+      'ink-3-light': hslToHex(h, s * .18, .52), 'ink-4-light': hslToHex(h, s * .14, .67),
+      'line-light': hslToHex(h, s * .2, .89), 'line-strong-light': hslToHex(h, s * .22, .82),
+      'accent-light': lightAccent, 'accent-hover-light': hslToHex(h, s, .35),
+      'on-accent-light': readableOn(lightAccent), 'accent-soft-light': hslToHex(h, s * .62, .94),
+      'accent-ink-light': hslToHex(h, s * .92, .32), 'focus-light': hslToHex(h, s, .56),
+      'bg-dark': hslToHex(h, s * .2, .09), 'surface-dark': hslToHex(h, s * .18, .13),
+      'surface-2-dark': hslToHex(h, s * .2, .17), 'surface-3-dark': hslToHex(h, s * .2, .22),
+      'ink-dark': hslToHex(h, s * .18, .94), 'ink-2-dark': hslToHex(h, s * .2, .75),
+      'ink-3-dark': hslToHex(h, s * .16, .57), 'ink-4-dark': hslToHex(h, s * .13, .4),
+      'line-dark': hslToHex(h, s * .18, .23), 'line-strong-dark': hslToHex(h, s * .2, .31),
+      'accent-dark': darkAccent, 'accent-hover-dark': hslToHex(h, Math.max(s, .56), .83),
+      'on-accent-dark': readableOn(darkAccent), 'accent-soft-dark': hslToHex(h, s * .55, .22),
+      'accent-ink-dark': hslToHex(h, Math.max(s, .5), .83), 'focus-dark': hslToHex(h, Math.max(s, .56), .76)
+    };
+  }
+
+  function setAdaptivePalette(palette) {
+    const root = document.documentElement.style;
+    const values = palette || ADAPTIVE_DEFAULTS;
+    Object.entries(values).forEach(([name, value]) => root.setProperty(`--adaptive-${name}`, value));
+  }
+
+  function updateThemeMetaColor() {
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    if (color) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
+  }
+
+  function analyzeBackground() {
+    if (!settings.hasBackground || !backgroundUrl) {
+      backgroundPalette = null;
+      analyzedBackgroundUrl = '';
+      backgroundAnalysisToken++;
+      setAdaptivePalette(null);
+      return;
+    }
+    if (backgroundUrl === analyzedBackgroundUrl) return;
+    analyzedBackgroundUrl = backgroundUrl;
+    const token = ++backgroundAnalysisToken;
+    const image = new Image();
+    image.decoding = 'async';
+    image.onload = () => {
+      if (token !== backgroundAnalysisToken) return;
+      try {
+        const size = 36;
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(image, 0, 0, size, size);
+        const pixels = context.getImageData(0, 0, size, size).data;
+        const hueBins = new Array(24).fill(0);
+        let colourWeight = 0;
+        for (let i = 0; i < pixels.length; i += 16) {
+          const r = pixels[i] / 255; const g = pixels[i + 1] / 255; const b = pixels[i + 2] / 255;
+          const max = Math.max(r, g, b); const min = Math.min(r, g, b); const delta = max - min;
+          const lightness = (max + min) / 2;
+          if (delta < 0.025 || lightness < 0.06 || lightness > 0.96) continue;
+          const saturation = delta / (1 - Math.abs(2 * lightness - 1));
+          let hue = 0;
+          if (max === r) hue = 60 * (((g - b) / delta) % 6);
+          else if (max === g) hue = 60 * ((b - r) / delta + 2);
+          else hue = 60 * ((r - g) / delta + 4);
+          const weight = saturation * (0.45 + 0.55 * (1 - Math.abs(lightness - .5) * 1.7));
+          hueBins[Math.floor((((hue % 360) + 360) % 360) / 15)] += weight;
+          colourWeight += weight;
+        }
+        const colourful = colourWeight > 0.08;
+        const dominantBin = hueBins.reduce((best, value, index) => value > hueBins[best] ? index : best, 0);
+        const hue = colourful ? (dominantBin + .5) * 15 : 220;
+        const saturation = colourful ? Math.min(.78, Math.max(.34, colourWeight / (size * size / 16) * 1.8)) : .28;
+        backgroundPalette = paletteForImage(hue, saturation);
+        setAdaptivePalette(backgroundPalette);
+        updateThemeMetaColor();
+        window.dispatchEvent(new Event('yunduo-appearance'));
+      } catch (_) {
+        backgroundPalette = null;
+        setAdaptivePalette(null);
+        updateThemeMetaColor();
+      }
+    };
+    image.onerror = () => {
+      if (token !== backgroundAnalysisToken) return;
+      backgroundPalette = null;
+      setAdaptivePalette(null);
+      updateThemeMetaColor();
+    };
+    image.src = backgroundUrl;
+  }
+
   function applyAppearance() {
     const theme = resolvedTheme();
     document.documentElement.dataset.theme = theme;
+
+    setAdaptivePalette(backgroundPalette);
+    analyzeBackground();
 
     const root = document.documentElement.style;
     root.setProperty('--bg-image-opacity', settings.hasBackground ? String(settings.bgOpacity) : '0');
@@ -342,7 +490,7 @@
 
     const image = document.getElementById('backdropImage');
     if (image) image.style.backgroundImage = backgroundUrl ? `url("${backgroundUrl}")` : 'none';
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#121116' : '#F7F5FB');
+    updateThemeMetaColor();
 
     try { call('setAppearance', theme === 'dark'); } catch (_) { }
     window.dispatchEvent(new Event('yunduo-appearance'));
@@ -2238,6 +2386,8 @@
       // The native side stores the image and serves it at /youqi/background;
       // the version query busts the WebView cache after a replacement.
       backgroundUrl = `${BACKGROUND_PATH}?v=${Number(result.data.version) || Date.now()}`;
+      backgroundPalette = null;
+      analyzedBackgroundUrl = '';
       saveSettings({ hasBackground: true, bgName: result.data.name || '自定义图片' });
       render();
       toast('背景已更新');
